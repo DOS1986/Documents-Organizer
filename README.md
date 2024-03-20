@@ -75,9 +75,9 @@ Documents Organizer simplifies the task of managing and organizing your document
 5. **Cancel Flatten Operation**: Stop the flattening operation in progress.
 6. **Reveal in Explorer**: Right-click on a folder in the tree view to open it in File Explorer.
 
-### Running the Executable (Coming soon)
+### Running the Executable
 
-- Download the latest release from the [Releases](https://github.com/DOS1986/document-organizer/releases) page.
+- Download the latest release from the [Releases](https://github.com/DOS1986/documents-organizer/releases) page.
 - Extract the downloaded ZIP file.
 - Double-click `document-organizer.exe` to run the application.
 
@@ -133,7 +133,7 @@ Contributions are welcome! Fork this repository, make your changes, and submit a
 
 ## Issues
 
-If you encounter any issues or have suggestions for improvements, please [open an issue](https://github.com/DOS1986/document-organizer/issues).
+If you encounter any issues or have suggestions for improvements, please [open an issue](https://github.com/DOS1986/documents-organizer/issues).
 
 ## License
 
