@@ -2,151 +2,225 @@
 
 ![Documents Organizer Logo](images/logo/folder-48.png)
 
-Documents Organizer is a Python application designed to help you organize your files and folders efficiently. It provides features such as flattening folders, organizing files by extension and date modified, and more.
+A Python desktop utility for organizing directories by file type and modification date, flattening previously organized folder structures, and managing collections of files through a graphical interface.
 
-## Table of Contents
+Documents Organizer was created to automate repetitive file-management tasks while still giving the user control over the folder being processed and visibility into what the application is doing.
 
-
-- [Documents Organizer](#documents-organizer)
-  - [Table of Contents](#table-of-contents)
-  - [Introduction](#introduction)
-  - [Screenshots](#screenshots)
-    - [Application](#application)
-    - [Selecting Folder](#selecting-folder)
-    - [Add Extensions](#add-extensions)
-    - [Flattening Folders](#flattening-folders)
-    - [Organizing Files](#organizing-files)
-  - [Usage](#usage)
-    - [To use Documents Organizer](#to-use-documents-organizer)
-    - [Document Organizer Usages](#document-organizer-usages)
-    - [Running the Executable (Coming soon)](#running-the-executable-coming-soon)
-  - [Features](#features)
-  - [Installation](#installation)
-  - [Configuration](#configuration)
-  - [Troubleshooting](#troubleshooting)
-  - [Contributing](#contributing)
-  - [Issues](#issues)
-  - [License](#license)
-  - [Disclaimer](#disclaimer)
-  - [Contact](#contact)
-  - [About](#about)
-
-## Introduction
-
-Documents Organizer simplifies the task of managing and organizing your documents by offering a user-friendly interface and powerful organizational capabilities. With this application, you can flatten nested folders created by using the organize folders menu item, organize files by extension and date, and maintain a tidy directory structure.
-
-## Screenshots
-
-### Application
-
-<img src="images/screenshots/document_organizer_application.png" width="400" height="300">
-
-### Selecting Folder
-
-<img src="images/screenshots/select_folder.png" width="400" height="300">
-
-### Add Extensions
-
-<img src="images/screenshots/add_extensions.png" width="400" height="300">
-
-### Flattening Folders
-
-<img src="images/screenshots/flattening_folders.png" width="400" height="300">
-
-### Organizing Files
-
-<img src="images/screenshots/organizing_files.png" width="400" height="300">
-
-## Usage
-
-### To use Documents Organizer
-
-1. Select a folder to organize or flatten.
-2. Choose an action from the menu bar (e.g., Organize Folders, Flatten Folders).
-3. Monitor the log for updates and confirmation messages.
-4. Enjoy a well-organized folder structure!
-
-### Document Organizer Usages
-
-1. **Select Folder**: Choose the folder you want to organize or flatten.
-2. **Organize Folders**: Automatically organize files within the selected folder.
-3. **Flatten Folders**: Flatten nested folders within the selected folder.
-4. **Add Extensions**: Add additional file extensions for flattening.
-5. **Cancel Flatten Operation**: Stop the flattening operation in progress.
-6. **Reveal in Explorer**: Right-click on a folder in the tree view to open it in File Explorer.
-
-### Running the Executable
-
-- Download the latest release from the [Releases](https://github.com/DOS1986/documents-organizer/releases) page.
-- Extract the downloaded ZIP file.
-- Double-click `document-organizer.exe` to run the application.
+---
 
 ## Features
 
-- **Organize Files**: Automatically organize files into folders based on their extensions and modification dates.
-- **Flatten Folders**: Flatten nested folders by moving files from extension-named folders to their parent folder.
-- **Add Extensions**: Easily add new extensions to the list of files to be flattened.
-- **Cancel Operation**: Ability to cancel the flattening operation mid-process.
-- **Right-Click Menu**: Context menu support to reveal the selected folder in Explorer.
+- **Organize Files** — Organize files into folders based on file extension and modification date.
+- **Flatten Folders** — Move files out of supported nested folder structures and back into their parent folders.
+- **Custom Extensions** — Add additional file extensions to the flattening workflow.
+- **Cancelable Operations** — Stop a flattening operation while it is in progress.
+- **Folder Selection** — Select the directory that should be organized or flattened.
+- **Explorer Integration** — Open selected folders directly in Windows File Explorer.
+- **Activity Log** — Monitor file operations and application messages while an operation is running.
 
-## Installation
+---
 
-1. Clone the repository:
+## Screenshots
 
-    ```bash
-    git clone https://github.com/username/documents-organizer.git
-    ```
+### Main Application
 
-2. Navigate to the project directory:
+<img src="images/screenshots/document_organizer_application.png" alt="Documents Organizer main application window" width="600">
 
-    ```bash
-    cd documents-organizer
-    ```
+### Folder Selection
 
-3. Install dependencies:
+<img src="images/screenshots/select_folder.png" alt="Selecting a folder in Documents Organizer" width="600">
 
-    ```bash
-    pip install -r requirements.txt
-    ```
+### Adding Extensions
 
-4. Run the application:
+<img src="images/screenshots/add_extensions.png" alt="Adding file extensions in Documents Organizer" width="600">
 
-    ```bash
-    python main.py
-    ```
+### Flattening Folders
+
+<img src="images/screenshots/flattening_folders.png" alt="Flattening folders in Documents Organizer" width="600">
+
+### Organizing Files
+
+<img src="images/screenshots/organizing_files.png" alt="Organizing files in Documents Organizer" width="600">
+
+---
+
+## Getting Started
+
+### Requirements
+
+Documents Organizer is written in Python and uses Tkinter for its graphical interface.
+
+Before running the application, make sure you have:
+
+- Python installed
+- The dependencies listed in `requirements.txt`
+- Permission to read and modify the directories you intend to organize
+
+### Clone the Repository
+
+Clone the repository from:
+
+`https://github.com/DOS1986/Documents-Organizer`
+
+Then navigate into the cloned project directory.
+
+### Install Dependencies
+
+Install the Python packages listed in:
+
+`requirements.txt`
+
+### Run the Application
+
+Run the application's main Python entry point.
+
+The exact setup and execution commands can be added here once the current project structure has been reviewed and verified.
+
+---
+
+## Usage
+
+### Select a Folder
+
+Choose the folder you want Documents Organizer to work with.
+
+Always verify that the correct folder has been selected before starting an operation.
+
+### Organize Files
+
+Use the organize operation to sort files within the selected directory into folders based on file extension and modification date.
+
+### Flatten Folders
+
+Use the flatten operation to move files out of supported nested folder structures and back into their parent folders.
+
+### Add Extensions
+
+Additional file extensions can be added through the application when files outside the default extension list need to be included in the flattening process.
+
+### Cancel an Operation
+
+A flattening operation can be canceled while it is running using the application's cancellation option.
+
+### Reveal in Explorer
+
+Right-click a folder in the tree view to open that location directly in Windows File Explorer.
+
+### Monitor Operations
+
+Use the application's log to monitor progress, confirmation messages, and errors while file operations are being performed.
+
+---
+
+## Running a Packaged Release
+
+Packaged Windows releases may be made available through the project's GitHub Releases page:
+
+[Documents Organizer Releases](https://github.com/DOS1986/Documents-Organizer/releases)
+
+If no packaged release is currently available, the application can be run directly from the Python source.
+
+---
 
 ## Configuration
 
-Documents Organizer does not require any additional configuration. However, you can customize the list of extensions to flatten by editing the extensions_to_flatten variable in the source code if you do not feel like adding them through the .
+Documents Organizer does not require external configuration for normal use.
+
+Additional file extensions used by the flattening process can be added through the application's interface.
+
+---
+
+## Technology
+
+Documents Organizer currently uses:
+
+- Python
+- Tkinter
+- Local filesystem operations
+- Windows File Explorer integration
+
+---
+
+## File Safety
+
+Documents Organizer performs operations that can move files and change directory structures.
+
+Before using the application on important data:
+
+- Keep a backup of the files being organized.
+- Test the application on a small sample directory first.
+- Verify that the correct folder has been selected before starting an operation.
+- Review the application log while operations are running.
+- Avoid manually modifying the same files or folders while Documents Organizer is processing them.
+
+Use the application carefully when working with files that do not have another backup.
+
+---
 
 ## Troubleshooting
 
-If you encounter any issues while using Documents Organizer, try the following troubleshooting steps:
+If you encounter a problem while using Documents Organizer:
 
-- Check the log for error messages and follow any instructions provided.
-- Ensure that you have the latest version of Python installed.
-- Verify that you have the necessary permissions to access and modify the selected folders.
+- Review the application log for error messages.
+- Confirm that Python and the required dependencies are installed.
+- Verify that your user account has permission to read and modify the selected directory.
+- Make sure files being processed are not locked by another application.
+- Try reproducing the issue using a small test directory.
+- Review existing GitHub issues to see whether the problem has already been reported.
+
+---
 
 ## Contributing
 
-Contributions are welcome! Fork this repository, make your changes, and submit a pull request.
+Contributions, bug reports, and suggestions are welcome.
+
+If you would like to contribute:
+
+1. Fork the repository.
+2. Create a branch for your change.
+3. Make and test your changes.
+4. Submit a pull request describing what was changed and why.
+
+---
 
 ## Issues
 
-If you encounter any issues or have suggestions for improvements, please [open an issue](https://github.com/DOS1986/documents-organizer/issues).
+Found a bug or have an idea for an improvement?
+
+[Open an issue](https://github.com/DOS1986/Documents-Organizer/issues).
+
+When reporting a bug, please include:
+
+- What you were trying to do
+- What happened
+- What you expected to happen
+- Steps that reproduce the issue
+- Any relevant application log output
+
+Please avoid including private file names, paths, or other sensitive information in public issue reports.
+
+---
 
 ## License
 
-This project is licensed under the [MIT License](LICENSE).
+Documents Organizer is licensed under the [MIT License](LICENSE).
+
+---
 
 ## Disclaimer
 
-Document Organizer is provided as-is without any guarantee or warranty. Use at your own risk. The authors accept no responsibility for any loss or damage arising from its use.
+Documents Organizer is provided as-is without warranty.
 
-## Contact
+The application performs filesystem operations that may move files and modify directory structures. Users are responsible for maintaining appropriate backups and verifying the selected directory before performing an operation.
 
-For questions or support, feel free to contact the maintainers.
+See the [MIT License](LICENSE) for the project's licensing terms.
 
-## About
+---
 
-Document Organizer was created by David Southwood. It is written in Python and uses the Tkinter library for the graphical user interface.
+## Author
+
+Created by [David O. Southwood](https://davidosouthwood.com).
+
+- [Website](https://davidosouthwood.com)
+- [GitHub](https://github.com/DOS1986)
+- [LinkedIn](https://www.linkedin.com/in/davidsouthwood/)
