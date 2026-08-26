@@ -1,5 +1,4 @@
 import os
-import shutil
 import threading
 import tkinter as tk
 import tkinter.scrolledtext as scrolledtext
@@ -10,16 +9,17 @@ from PIL import Image
 from pystray import MenuItem as item
 
 from documents_organizer import __version__
-from documents_organizer.filesystem import move_file_safely
 from documents_organizer.platform_utils import open_in_file_manager
 from documents_organizer.services.organizer import (
     OrganizationResult,
     organize_directory,
 )
+from documents_organizer.services.flattener import (
+    FlattenResult,
+    flatten_directory,
+)
 
-
-# Define a global flag for canceling flattening operation
-cancel_flattening = False
+flatten_cancel_event = threading.Event()
 
 # Global variable to store the folder path
 folder_path = ""
@@ -136,9 +136,8 @@ def _handle_organization_error(
         message,
     )
 
-
 def flatten_folders():
-    """Flatten folders based on specified extensions."""
+    """Start a flatten operation for the selected folder."""
     selected_item = tree.focus()
 
     if not selected_item:
@@ -153,184 +152,135 @@ def flatten_folders():
         selected_item,
     )
 
-    if not selected_folder:
+    if not os.path.isdir(
+        selected_folder
+    ):
         messagebox.showerror(
             "Error",
-            "Unable to determine folder path.",
+            "The selected folder does not exist.",
         )
         return
 
-    global cancel_flattening
-    cancel_flattening = False
+    flatten_cancel_event.clear()
 
-    threading.Thread(
-        target=flatten_folder_recursive,
+    log_to_text(
+        f"Flattening: {selected_folder}"
+    )
+
+    worker = threading.Thread(
+        target=_run_flattener,
         args=(selected_folder,),
         daemon=True,
-    ).start()
+    )
 
+    worker.start()
 
-def flatten_folder_recursive(folder):
-    """Recursively flatten folders."""
-    global cancel_flattening
+def _run_flattener(
+    selected_folder,
+):
+    """Run the flattener service outside the Tkinter main thread."""
+    try:
+        result = flatten_directory(
+            selected_folder,
+            cancel_event=flatten_cancel_event,
+        )
 
-    if cancel_flattening:
-        log_to_text("Flattening operation canceled.")
+    except (
+        FileNotFoundError,
+        NotADirectoryError,
+        PermissionError,
+        OSError,
+    ) as exc:
+        win.after(
+            0,
+            _handle_flatten_error,
+            str(exc),
+        )
+
         return
 
-    try:
-        for root, dirs, files in os.walk(folder):
-            if cancel_flattening:
-                log_to_text(
-                    "Flattening operation canceled."
-                )
-                return
+    win.after(
+        0,
+        _handle_flatten_result,
+        result,
+    )
 
-            for directory in dirs[:]:
-                if cancel_flattening:
-                    log_to_text(
-                        "Flattening operation canceled."
-                    )
-                    return
-
-                dir_path = os.path.join(
-                    root,
-                    directory,
-                )
-
-                if (
-                    os.path.basename(directory).lower()
-                    in extensions_to_flatten
-                ):
-                    flatten_subfolders(dir_path)
-
-                    if cancel_flattening:
-                        log_to_text(
-                            "Flattening operation canceled."
-                        )
-                        return
-
-                    move_files_to_parent(dir_path)
-
-                    dirs.remove(directory)
-
-                else:
-                    if not cancel_flattening:
-                        flatten_folder_recursive(
-                            dir_path
-                        )
-
-        if not os.path.isdir(folder):
-            return
-
-        remaining_items = os.listdir(folder)
-
-        if all(
-            item_name.lower()
-            not in extensions_to_flatten
-            for item_name in remaining_items
-        ):
-            log_to_text(
-                f"{os.path.basename(folder)} "
-                "is clean of extension folders."
-            )
-
-            refresh_treeview()
-
-        log_to_text(
-            f"All subfolders in "
-            f"{os.path.basename(folder)} flattened."
-        )
-
-    except Exception as exc:
-        log_to_text(
-            f"Error flattening folders: {exc}"
-        )
-
-
-def flatten_subfolders(folder):
-    """Flatten subfolders of the specified folder."""
-    global cancel_flattening
-
-    for root, dirs, files in os.walk(folder):
-        if cancel_flattening:
-            return
-
-        for filename in files:
-            if cancel_flattening:
-                return
-
-            src = os.path.join(
-                root,
-                filename,
-            )
-
-            destination = os.path.join(
-                folder,
-                filename,
-            )
-
-            # A file already located directly in the target folder
-            # does not need to be moved.
-            if os.path.abspath(src) == os.path.abspath(
-                destination
-            ):
-                continue
-
-            move_file_safely(
-                src,
-                destination,
-            )
-
-    for root, dirs, files in os.walk(
-        folder,
-        topdown=False,
+def _handle_flatten_result(
+    result: FlattenResult,
+):
+    """Display flatten results on the Tkinter main thread."""
+    for extension, count in sorted(
+        result.by_extension.items()
     ):
-        if cancel_flattening:
-            return
+        label = (
+            "file"
+            if count == 1
+            else "files"
+        )
 
-        for directory in dirs:
-            directory_path = os.path.join(
-                root,
-                directory,
+        log_to_text(
+            f"Flattened {count} "
+            f"{extension} {label}."
+        )
+
+    if result.skipped:
+        label = (
+            "file"
+            if result.skipped == 1
+            else "files"
+        )
+
+        log_to_text(
+            f"Skipped {result.skipped} "
+            f"{label} that did not match "
+            "their file-type folder."
+        )
+
+    if result.failed:
+        label = (
+            "failure"
+            if result.failed == 1
+            else "failures"
+        )
+
+        log_to_text(
+            f"Encountered "
+            f"{result.failed} {label}."
+        )
+
+        for failure in result.failures:
+            log_to_text(
+                f"  {failure.path}: "
+                f"{failure.error}"
             )
 
-            if os.path.isdir(directory_path):
-                shutil.rmtree(directory_path)
+    if result.cancelled:
+        log_to_text(
+            "Flattening canceled."
+        )
+    else:
+        log_to_text(
+            f"Flattening complete. "
+            f"{result.moved} files moved "
+            f"and "
+            f"{result.directories_removed} "
+            f"empty folders removed."
+        )
 
+    refresh_treeview()
 
-def move_files_to_parent(folder):
-    """Move files from a folder to its parent folder."""
-    global cancel_flattening
+def _handle_flatten_error(
+    message: str,
+):
+    """Display a fatal flatten error."""
+    log_to_text(
+        f"Flattening failed: {message}"
+    )
 
-    parent_folder = os.path.dirname(folder)
-
-    for root, dirs, files in os.walk(folder):
-        if cancel_flattening:
-            return
-
-        for filename in files:
-            if cancel_flattening:
-                return
-
-            src = os.path.join(
-                root,
-                filename,
-            )
-
-            destination = os.path.join(
-                parent_folder,
-                filename,
-            )
-
-            move_file_safely(
-                src,
-                destination,
-            )
-
-    if os.path.isdir(folder):
-        shutil.rmtree(folder)
-
+    messagebox.showerror(
+        "Flattening Failed",
+        message,
+    )
 
 def get_full_path(tree, item):
     """Get the full path of a selected item in the Treeview."""
@@ -397,10 +347,11 @@ def input_extensions(existing_extensions):
 
 
 def stop_flattening():
-    """Stop the flattening operation."""
-    global cancel_flattening
+    """Request cancellation of the active flatten operation."""
+    if flatten_cancel_event.is_set():
+        return
 
-    cancel_flattening = True
+    flatten_cancel_event.set()
 
     log_to_text(
         "Cancel requested..."
