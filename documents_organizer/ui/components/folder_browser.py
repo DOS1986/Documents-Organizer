@@ -31,11 +31,22 @@ class FolderBrowser(ttk.LabelFrame):
         )
 
         self._root_path: Path | None = None
+        self._root_item: str | None = None
 
+        # Map Treeview item IDs to filesystem paths.
         self._item_paths: dict[
             str,
             Path,
         ] = {}
+
+        # Reverse lookup used when restoring selections.
+        self._path_items: dict[
+            Path,
+            str,
+        ] = {}
+
+        # Tree items whose immediate children have already been loaded.
+        self._loaded_items: set[str] = set()
 
         self._on_selection_changed = (
             on_selection_changed
@@ -80,7 +91,6 @@ class FolderBrowser(ttk.LabelFrame):
 
         if selected_items:
             item = selected_items[0]
-
         else:
             item = self._tree.focus()
 
@@ -116,12 +126,8 @@ class FolderBrowser(ttk.LabelFrame):
         )
 
         self._tree.configure(
-            yscrollcommand=(
-                vertical_scrollbar.set
-            ),
-            xscrollcommand=(
-                horizontal_scrollbar.set
-            ),
+            yscrollcommand=vertical_scrollbar.set,
+            xscrollcommand=horizontal_scrollbar.set,
         )
 
         self._tree.grid(
@@ -145,6 +151,11 @@ class FolderBrowser(ttk.LabelFrame):
         self._tree.bind(
             "<<TreeviewSelect>>",
             self._handle_selection_changed,
+        )
+
+        self._tree.bind(
+            "<<TreeviewOpen>>",
+            self._handle_tree_open,
         )
 
         self._tree.bind(
@@ -219,16 +230,17 @@ class FolderBrowser(ttk.LabelFrame):
 
         self._render(
             root=self._root_path,
-            preferred_path=(
-                previous_selection
-            ),
+            preferred_path=previous_selection,
         )
 
     def clear(self) -> None:
         """Clear the folder browser."""
         self._root_path = None
+        self._root_item = None
 
         self._item_paths.clear()
+        self._path_items.clear()
+        self._loaded_items.clear()
 
         self._tree.delete(
             *self._tree.get_children()
@@ -239,7 +251,7 @@ class FolderBrowser(ttk.LabelFrame):
         self._notify_selection_changed()
 
     # -------------------------------------------------------------------------
-    # Tree population
+    # Tree rendering
     # -------------------------------------------------------------------------
 
     def _render(
@@ -248,12 +260,14 @@ class FolderBrowser(ttk.LabelFrame):
         root: Path,
         preferred_path: Path | None,
     ) -> None:
-        """Render the folder tree."""
+        """Render the root and its immediate child directories."""
         self._tree.delete(
             *self._tree.get_children()
         )
 
         self._item_paths.clear()
+        self._path_items.clear()
+        self._loaded_items.clear()
 
         root_item = self._tree.insert(
             "",
@@ -262,26 +276,25 @@ class FolderBrowser(ttk.LabelFrame):
             open=True,
         )
 
-        self._item_paths[
-            root_item
-        ] = root
+        self._root_item = root_item
 
-        preferred_item: str | None = None
-
-        if preferred_path == root:
-            preferred_item = root_item
-
-        child_preferred_item = (
-            self._populate_children(
-                parent=root_item,
-                directory=root,
-                preferred_path=preferred_path,
-            )
+        self._register_item(
+            root_item,
+            root,
         )
 
-        if child_preferred_item is not None:
+        # Only the root's immediate children are loaded here.
+        self._load_children(
+            root_item
+        )
+
+        preferred_item = None
+
+        if preferred_path is not None:
             preferred_item = (
-                child_preferred_item
+                self._reveal_path(
+                    preferred_path
+                )
             )
 
         if preferred_item is None:
@@ -303,20 +316,41 @@ class FolderBrowser(ttk.LabelFrame):
 
         self._notify_selection_changed()
 
-    def _populate_children(
+    def _load_children(
         self,
-        *,
-        parent: str,
-        directory: Path,
-        preferred_path: Path | None,
-    ) -> str | None:
+        item: str,
+    ) -> None:
         """
-        Populate all child directories.
+        Load one level of child directories beneath a Treeview item.
 
-        Returns the Treeview item matching preferred_path when found.
+        Directories are loaded only when their parent is expanded.
         """
+        if item in self._loaded_items:
+            return
+
+        directory = self._item_paths.get(
+            item
+        )
+
+        if directory is None:
+            return
+
+        # Remove the placeholder used to display the expand arrow.
+        children = self._tree.get_children(
+            item
+        )
+
+        if children:
+            self._tree.delete(
+                *children
+            )
+
+        self._loaded_items.add(
+            item
+        )
+
         try:
-            items = sorted(
+            directory_items = sorted(
                 directory.iterdir(),
                 key=lambda path: (
                     path.name.lower()
@@ -328,61 +362,164 @@ class FolderBrowser(ttk.LabelFrame):
             FileNotFoundError,
             OSError,
         ):
-            return None
+            return
 
-        preferred_item: str | None = None
-
-        for item_path in items:
+        for item_path in directory_items:
             try:
-                if (
-                    not item_path.is_dir()
-                    or item_path.is_symlink()
-                ):
+                if not item_path.is_dir():
                     continue
+
+                # Avoid following directory symlinks and junction-like loops.
+                if item_path.is_symlink():
+                    continue
+
+                resolved_path = (
+                    item_path.resolve()
+                )
 
             except OSError:
                 continue
 
-            node = self._tree.insert(
-                parent,
-                "end",
-                text=item_path.name,
+            self._insert_directory(
+                parent=item,
+                directory=resolved_path,
             )
 
-            resolved_path = (
-                item_path.resolve()
-            )
+    def _insert_directory(
+        self,
+        *,
+        parent: str,
+        directory: Path,
+    ) -> str:
+        """
+        Insert a directory without loading its children.
 
-            self._item_paths[
-                node
-            ] = resolved_path
+        A placeholder child gives the directory an expansion arrow.
+        """
+        node = self._tree.insert(
+            parent,
+            "end",
+            text=directory.name,
+        )
 
-            if (
-                preferred_path is not None
-                and resolved_path
-                == preferred_path
-            ):
-                preferred_item = node
+        self._register_item(
+            node,
+            directory,
+        )
 
-            child_preferred_item = (
-                self._populate_children(
-                    parent=node,
-                    directory=resolved_path,
-                    preferred_path=(
-                        preferred_path
-                    ),
+        # The placeholder makes Tk display an expansion arrow.
+        # It is removed the first time the directory is expanded.
+        self._tree.insert(
+            node,
+            "end",
+            text="",
+        )
+
+        return node
+
+    def _register_item(
+        self,
+        item: str,
+        path: Path,
+    ) -> None:
+        """Associate a Treeview item with its filesystem path."""
+        self._item_paths[
+            item
+        ] = path
+
+        self._path_items[
+            path
+        ] = item
+
+    # -------------------------------------------------------------------------
+    # Lazy loading
+    # -------------------------------------------------------------------------
+
+    def _handle_tree_open(
+        self,
+        event: tk.Event | None = None,
+    ) -> None:
+        """Load a directory's children when it is expanded."""
+        item = self._tree.focus()
+
+        if not item:
+            return
+
+        self._load_children(
+            item
+        )
+
+    def _reveal_path(
+        self,
+        path: Path,
+    ) -> str | None:
+        """
+        Load only the ancestors required to reveal a path.
+
+        Used to restore the selected directory after a refresh.
+        """
+        if self._root_path is None:
+            return None
+
+        target = Path(
+            path
+        ).resolve()
+
+        root = self._root_path
+
+        try:
+            relative_path = (
+                target.relative_to(
+                    root
                 )
             )
 
-            if (
-                child_preferred_item
-                is not None
-            ):
-                preferred_item = (
-                    child_preferred_item
-                )
+        except ValueError:
+            return None
 
-        return preferred_item
+        if (
+            relative_path
+            == Path(".")
+        ):
+            return self._root_item
+
+        if self._root_item is None:
+            return None
+
+        current_item = (
+            self._root_item
+        )
+
+        current_path = root
+
+        for part in relative_path.parts:
+            # Make sure the current directory's immediate children exist.
+            self._load_children(
+                current_item
+            )
+
+            self._tree.item(
+                current_item,
+                open=True,
+            )
+
+            current_path = (
+                current_path
+                / part
+            ).resolve()
+
+            next_item = (
+                self._path_items.get(
+                    current_path
+                )
+            )
+
+            if next_item is None:
+                return None
+
+            current_item = next_item
+
+        return current_item
 
     # -------------------------------------------------------------------------
     # Selection

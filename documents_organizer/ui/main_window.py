@@ -654,7 +654,7 @@ class MainWindow:
         )
 
     # -------------------------------------------------------------------------
-    # Operation Presenter state
+    # Operation presentation
     # -------------------------------------------------------------------------
 
     def _write_operation_presentation(
