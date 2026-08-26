@@ -7,10 +7,6 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, ttk
 
-import pystray
-from PIL import Image
-from pystray import MenuItem as TrayMenuItem
-
 from documents_organizer import __version__
 from documents_organizer.platform_utils import open_in_file_manager
 from documents_organizer.resources import get_image_path
@@ -28,15 +24,15 @@ from documents_organizer.settings import (
     DEFAULT_WINDOW_WIDTH,
     MIN_WINDOW_HEIGHT,
     MIN_WINDOW_WIDTH,
-    TRAY_ICON_FILE,
-    TRAY_ICON_NAME,
     UI_QUEUE_POLL_INTERVAL_MS,
     WINDOW_ICON_FILE,
 )
 from documents_organizer.ui.components.activity_log import ActivityLog
 from documents_organizer.ui.components.folder_browser import FolderBrowser
 from documents_organizer.ui.components.folder_summary import FolderSummary
+from documents_organizer.ui.components.menu_bar import MenuBar
 from documents_organizer.ui.components.status_bar import StatusBar
+from documents_organizer.ui.tray_manager import TrayManager
 from documents_organizer.ui.components.toolbar import Toolbar
 from documents_organizer.ui.dialogs import (
     show_about as show_about_dialog,
@@ -55,12 +51,20 @@ class MainWindow:
         self.flatten_cancel_event = threading.Event()
         self.current_operation: str | None = None
         self.is_closing = False
-        self.tray_icon: pystray.Icon | None = None
 
         # Worker threads communicate with Tkinter through this queue.
         self.ui_queue: queue.Queue[
             tuple[str, object]
         ] = queue.Queue()
+
+        self.tray_manager = TrayManager(
+            on_show_requested=(
+                self._request_show_window
+            ),
+            on_exit_requested=(
+                self._request_exit_application
+            ),
+        )
 
         # UI state.
 
@@ -212,116 +216,17 @@ class MainWindow:
 
     def _create_menu_bar(self) -> None:
         """Create the application menu bar."""
-        menu_bar = tk.Menu(
-            self.root
-        )
-
-        self.root.config(
-            menu=menu_bar
-        )
-
-        # File menu
-        self.file_menu = tk.Menu(
-            menu_bar,
-            tearoff=0,
-        )
-
-        self.file_menu.add_command(
-            label="Select Folder",
-            command=self.select_folder,
-        )
-
-        self.file_menu.add_separator()
-
-        self.file_menu.add_command(
-            label="Minimize to Tray",
-            command=self.hide_window,
-        )
-
-        self.file_menu.add_separator()
-
-        self.file_menu.add_command(
-            label="Exit",
-            command=self.exit_app,
-        )
-
-        menu_bar.add_cascade(
-            label="File",
-            menu=self.file_menu,
-        )
-
-        # Action menu
-        action_menu = tk.Menu(
-            menu_bar,
-            tearoff=0,
-        )
-
-        self.organize_menu = tk.Menu(
-            action_menu,
-            tearoff=0,
-        )
-
-        self.organize_menu.add_command(
-            label="Organize Files",
-            command=self.run_organizer,
-        )
-
-        self.organize_menu.add_command(
-            label="Flatten Files",
-            command=self.run_flattener,
-        )
-
-        self.organize_menu.add_separator()
-
-        self.organize_menu.add_command(
-            label="Cancel Flatten Operation",
-            command=self.stop_flattening,
-        )
-
-        action_menu.add_cascade(
-            label="Organize",
-            menu=self.organize_menu,
-        )
-
-        self.view_menu = tk.Menu(
-            action_menu,
-            tearoff=0,
-        )
-
-        self.view_menu.add_command(
-            label="Clear Activity Log",
-            command=self.clear_log,
-        )
-
-        self.view_menu.add_command(
-            label="Refresh Folder Tree",
-            command=self.refresh_treeview,
-        )
-
-        action_menu.add_cascade(
-            label="View",
-            menu=self.view_menu,
-        )
-
-        menu_bar.add_cascade(
-            label="Action",
-            menu=action_menu,
-        )
-
-        # Help menu
-        help_menu = tk.Menu(
-            menu_bar,
-            tearoff=0,
-        )
-
-        help_menu.add_command(
-            label="About",
-            command=self.show_about,
-        )
-
-        menu_bar.add_cascade(
-            label="Help",
-            menu=help_menu,
+        self.menu_bar = MenuBar(
+            self.root,
+            on_select_folder=self.select_folder,
+            on_minimize_to_tray=self.hide_window,
+            on_exit=self.exit_app,
+            on_organize=self.run_organizer,
+            on_flatten=self.run_flattener,
+            on_cancel=self.stop_flattening,
+            on_clear_log=self.clear_log,
+            on_refresh=self.refresh_treeview,
+            on_about=self.show_about,
         )
 
     # -------------------------------------------------------------------------
@@ -1117,66 +1022,11 @@ class MainWindow:
             utilities_enabled=utilities_enabled,
         )
 
-        self._update_menu_states(
+        self.menu_bar.set_states(
             select_enabled=select_enabled,
             operations_enabled=operations_enabled,
             cancel_enabled=cancel_available,
             utilities_enabled=utilities_enabled,
-        )
-
-    def _update_menu_states(
-            self,
-            *,
-            select_enabled: bool,
-            operations_enabled: bool,
-            cancel_enabled: bool,
-            utilities_enabled: bool,
-    ) -> None:
-        """Update menu item states."""
-        self.file_menu.entryconfig(
-            0,
-            state=self._menu_state(
-                select_enabled
-            ),
-        )
-
-        self.organize_menu.entryconfig(
-            0,
-            state=self._menu_state(
-                operations_enabled
-            ),
-        )
-
-        self.organize_menu.entryconfig(
-            1,
-            state=self._menu_state(
-                operations_enabled
-            ),
-        )
-
-        self.organize_menu.entryconfig(
-            3,
-            state=self._menu_state(
-                cancel_enabled
-            ),
-        )
-
-        self.view_menu.entryconfig(
-            1,
-            state=self._menu_state(
-                utilities_enabled
-            ),
-        )
-
-    @staticmethod
-    def _menu_state(
-            enabled: bool,
-    ) -> str:
-        """Convert a boolean to a Tkinter menu state."""
-        return (
-            tk.NORMAL
-            if enabled
-            else tk.DISABLED
         )
 
     # -------------------------------------------------------------------------
@@ -1350,52 +1200,14 @@ class MainWindow:
 
     def hide_window(self) -> None:
         """Hide the application in the system tray."""
-        self.root.withdraw()
-
-        if (
-            self.tray_icon
-            is not None
-        ):
+        if self.tray_manager.is_running:
+            self.root.withdraw()
             return
 
         try:
-            with Image.open(
-                get_image_path(
-                    TRAY_ICON_FILE
-                )
-            ) as source_image:
-                image = (
-                    source_image.copy()
-                )
-
-            tray_menu = (
-                TrayMenuItem(
-                    "Show",
-                    self.show_window,
-                ),
-                TrayMenuItem(
-                    "Quit",
-                    self.exit_from_tray,
-                ),
-            )
-
-            self.tray_icon = pystray.Icon(
-                TRAY_ICON_NAME,
-                image,
-                APP_NAME,
-                tray_menu,
-            )
-
-            threading.Thread(
-                target=self.tray_icon.run,
-                daemon=True,
-            ).start()
+            self.tray_manager.start()
 
         except Exception as exc:
-            self.tray_icon = None
-
-            self.root.deiconify()
-
             show_error(
                 self.root,
                 "System Tray Error",
@@ -1405,17 +1217,12 @@ class MainWindow:
                     f"{exc}"
                 ),
             )
+            return
 
-    def show_window(
-        self,
-        icon: pystray.Icon,
-        menu_item: object,
-    ) -> None:
-        """Restore the application from the system tray."""
-        icon.stop()
+        self.root.withdraw()
 
-        self.tray_icon = None
-
+    def _request_show_window(self) -> None:
+        """Queue a request to restore the application window."""
         self.ui_queue.put(
             (
                 "show_window",
@@ -1423,16 +1230,8 @@ class MainWindow:
             )
         )
 
-    def exit_from_tray(
-        self,
-        icon: pystray.Icon,
-        menu_item: object,
-    ) -> None:
-        """Request application exit from the system tray."""
-        icon.stop()
-
-        self.tray_icon = None
-
+    def _request_exit_application(self) -> None:
+        """Queue a request to exit the application."""
         self.ui_queue.put(
             (
                 "exit_application",
@@ -1469,8 +1268,6 @@ class MainWindow:
 
         self.is_closing = True
 
-        if self.tray_icon is not None:
-            self.tray_icon.stop()
-            self.tray_icon = None
+        self.tray_manager.stop()
 
         self.root.destroy()
