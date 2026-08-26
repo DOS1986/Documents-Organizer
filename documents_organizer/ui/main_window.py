@@ -6,7 +6,7 @@ import threading
 import tkinter as tk
 import tkinter.scrolledtext as scrolledtext
 from pathlib import Path
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, ttk
 
 import pystray
 from PIL import Image
@@ -14,6 +14,7 @@ from pystray import MenuItem as TrayMenuItem
 
 from documents_organizer import __version__
 from documents_organizer.platform_utils import open_in_file_manager
+from documents_organizer.resources import get_image_path
 from documents_organizer.services.flattener import (
     FlattenResult,
     flatten_directory,
@@ -21,6 +22,23 @@ from documents_organizer.services.flattener import (
 from documents_organizer.services.organizer import (
     OrganizationResult,
     organize_directory,
+)
+from documents_organizer.settings import (
+    APP_NAME,
+    DEFAULT_WINDOW_HEIGHT,
+    DEFAULT_WINDOW_WIDTH,
+    MIN_WINDOW_HEIGHT,
+    MIN_WINDOW_WIDTH,
+    TRAY_ICON_FILE,
+    TRAY_ICON_NAME,
+    UI_QUEUE_POLL_INTERVAL_MS,
+    WINDOW_ICON_FILE,
+)
+from documents_organizer.ui.dialogs import (
+    ask_confirmation,
+    show_about as show_about_dialog,
+    show_error,
+    show_warning,
 )
 
 
@@ -50,7 +68,7 @@ class MainWindow:
 
         # Start polling for messages from background workers.
         self.root.after(
-            50,
+            UI_QUEUE_POLL_INTERVAL_MS,
             self._process_ui_queue,
         )
 
@@ -61,24 +79,31 @@ class MainWindow:
     def _configure_window(self) -> None:
         """Configure the root application window."""
         self.root.title(
-            "Documents Organizer"
+            APP_NAME
         )
 
         self.root.geometry(
-            "1080x800"
+            f"{DEFAULT_WINDOW_WIDTH}x"
+            f"{DEFAULT_WINDOW_HEIGHT}"
         )
 
         self.root.minsize(
-            800,
-            600,
+            MIN_WINDOW_WIDTH,
+            MIN_WINDOW_HEIGHT,
         )
 
         try:
             self.root.iconbitmap(
-                "images/folder-256.ico"
+                str(
+                    get_image_path(
+                        WINDOW_ICON_FILE
+                    )
+                )
             )
-        except tk.TclError:
-            # The ICO file may not be supported on every platform.
+        except (
+                tk.TclError,
+                OSError,
+        ):
             pass
 
     def _bind_events(self) -> None:
@@ -462,14 +487,16 @@ class MainWindow:
         )
 
         if selected_folder is None:
-            messagebox.showerror(
+            show_error(
+                self.root,
                 "No Folder Selected",
                 "Please select a folder first.",
             )
             return
 
         if not selected_folder.is_dir():
-            messagebox.showerror(
+            show_error(
+                self.root,
                 "Invalid Folder",
                 "The selected folder does not exist.",
             )
@@ -592,8 +619,8 @@ class MainWindow:
             f"Organization failed: "
             f"{message}"
         )
-
-        messagebox.showerror(
+        show_error(
+            self.root,
             "Organization Failed",
             message,
         )
@@ -609,14 +636,16 @@ class MainWindow:
         )
 
         if selected_folder is None:
-            messagebox.showerror(
+            show_error(
+                self.root,
                 "No Folder Selected",
                 "Please select a folder first.",
             )
             return
 
         if not selected_folder.is_dir():
-            messagebox.showerror(
+            show_error(
+                self.root,
                 "Invalid Folder",
                 "The selected folder does not exist.",
             )
@@ -756,7 +785,8 @@ class MainWindow:
             f"{message}"
         )
 
-        messagebox.showerror(
+        show_error(
+            self.root,
             "Flattening Failed",
             message,
         )
@@ -788,7 +818,8 @@ class MainWindow:
     ) -> bool:
         """Prevent conflicting filesystem operations from running together."""
         if self.current_operation is not None:
-            messagebox.showwarning(
+            show_warning(
+                self.root,
                 "Operation in Progress",
                 (
                     "Another file operation is "
@@ -875,7 +906,7 @@ class MainWindow:
             pass
 
         self.root.after(
-            50,
+            UI_QUEUE_POLL_INTERVAL_MS,
             self._process_ui_queue,
         )
 
@@ -886,8 +917,7 @@ class MainWindow:
     def _log_startup_message(self) -> None:
         """Display initial application information."""
         self.log_to_text(
-            f"Documents Organizer "
-            f"v{__version__}"
+            f"{APP_NAME} v{__version__}"
         )
 
         self.log_to_text(
@@ -981,7 +1011,8 @@ class MainWindow:
         )
 
         if selected_folder is None:
-            messagebox.showerror(
+            show_error(
+                self.root,
                 "No Folder Selected",
                 "Please select a folder first.",
             )
@@ -997,7 +1028,8 @@ class MainWindow:
             NotADirectoryError,
             OSError,
         ) as exc:
-            messagebox.showerror(
+            show_error(
+                self.root,
                 "Unable to Open Folder",
                 str(exc),
             )
@@ -1015,7 +1047,9 @@ class MainWindow:
 
         try:
             image = Image.open(
-                "images/folder-256.png"
+                get_image_path(
+                    TRAY_ICON_FILE
+                )
             )
 
             tray_menu = (
@@ -1030,9 +1064,9 @@ class MainWindow:
             )
 
             self.tray_icon = pystray.Icon(
-                "DocumentsOrganizer",
+                TRAY_ICON_NAME,
                 image,
-                "Documents Organizer",
+                APP_NAME,
                 tray_menu,
             )
 
@@ -1045,14 +1079,14 @@ class MainWindow:
             self.tray_icon = None
 
             self.root.deiconify()
-
-            messagebox.showerror(
+            show_error(
+                self.root,
                 "System Tray Error",
                 (
                     "Documents Organizer could "
                     "not create the system tray "
                     f"icon.\n\n{exc}"
-                ),
+                )
             )
 
     def show_window(
@@ -1095,43 +1129,35 @@ class MainWindow:
 
     def show_about(self) -> None:
         """Display application information."""
-        messagebox.showinfo(
-            "About Documents Organizer",
-            (
-                "Documents Organizer\n"
-                f"Version: v{__version__}\n\n"
-                "Created by David Southwood\n"
-                "License: MIT License"
-            ),
+        show_about_dialog(
+            self.root
         )
 
     def exit_app(self) -> None:
         """Close the application."""
         if self.current_operation is not None:
-            should_exit = (
-                messagebox.askyesno(
-                    "Operation in Progress",
-                    (
-                        "A file operation is still "
-                        "running.\n\n"
-                        "Are you sure you want to "
-                        "exit Documents Organizer?"
-                    ),
-                )
+            should_exit = ask_confirmation(
+                self.root,
+                "Operation in Progress",
+                (
+                    "A file operation is still "
+                    "running.\n\n"
+                    f"Are you sure you want to exit "
+                    f"{APP_NAME}?"
+                ),
             )
 
             if not should_exit:
                 return
 
             if (
-                self.current_operation
-                == "flatten"
+                    self.current_operation
+                    == "flatten"
             ):
                 self.flatten_cancel_event.set()
 
         if self.tray_icon is not None:
             self.tray_icon.stop()
-
             self.tray_icon = None
 
         self.root.destroy()
