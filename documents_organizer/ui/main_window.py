@@ -2,7 +2,6 @@ from __future__ import annotations
 
 
 import queue
-import threading
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, ttk
@@ -10,14 +9,6 @@ from tkinter import filedialog, ttk
 from documents_organizer import __version__
 from documents_organizer.platform_utils import open_in_file_manager
 from documents_organizer.resources import get_image_path
-from documents_organizer.services.flattener import (
-    FlattenResult,
-    flatten_directory,
-)
-from documents_organizer.services.organizer import (
-    OrganizationResult,
-    organize_directory,
-)
 from documents_organizer.settings import (
     APP_NAME,
     DEFAULT_WINDOW_HEIGHT,
@@ -27,6 +18,10 @@ from documents_organizer.settings import (
     UI_QUEUE_POLL_INTERVAL_MS,
     WINDOW_ICON_FILE,
 )
+
+from documents_organizer.services.flattener import FlattenResult
+from documents_organizer.services.organizer import OrganizationResult
+
 from documents_organizer.ui.components.activity_log import ActivityLog
 from documents_organizer.ui.components.folder_browser import FolderBrowser
 from documents_organizer.ui.components.folder_summary import FolderSummary
@@ -34,6 +29,10 @@ from documents_organizer.ui.components.menu_bar import MenuBar
 from documents_organizer.ui.components.status_bar import StatusBar
 from documents_organizer.ui.tray_manager import TrayManager
 from documents_organizer.ui.components.toolbar import Toolbar
+from documents_organizer.controllers.operation_controller import (
+    OperationController,
+    OperationName,
+)
 from documents_organizer.ui.dialogs import (
     show_about as show_about_dialog,
     show_error,
@@ -48,8 +47,6 @@ class MainWindow:
         self.root = root
 
         self.folder_path: Path | None = None
-        self.flatten_cancel_event = threading.Event()
-        self.current_operation: str | None = None
         self.is_closing = False
 
         # Worker threads communicate with Tkinter through this queue.
@@ -73,6 +70,27 @@ class MainWindow:
         self._create_menu_bar()
         self._create_layout()
         self._bind_events()
+
+        self.operations = OperationController(
+            self.root,
+            on_started=self._handle_operation_started,
+            on_finished=self._handle_operation_finished,
+            on_cancel_requested=(
+                self._handle_cancel_requested
+            ),
+            on_organization_result=(
+                self._handle_organization_result
+            ),
+            on_organization_error=(
+                self._handle_organization_error
+            ),
+            on_flatten_result=(
+                self._handle_flatten_result
+            ),
+            on_flatten_error=(
+                self._handle_flatten_error
+            ),
+        )
 
         self._log_startup_message()
         self._update_action_states()
@@ -443,7 +461,7 @@ class MainWindow:
 
     def select_folder(self) -> None:
         """Allow the user to select a root directory."""
-        if self.current_operation is not None:
+        if self.operations.is_busy:
             show_warning(
                 self.root,
                 "Operation in Progress",
@@ -568,56 +586,10 @@ class MainWindow:
             )
             return
 
-        if not self._begin_operation(
-            "organize"
-        ):
-            return
-
-        self.log_to_text(
-            f"Organizing: "
-            f"{selected_folder}"
-        )
-
-        worker = threading.Thread(
-            target=self._run_organizer_worker,
-            args=(
-                selected_folder,
-            ),
-            daemon=True,
-        )
-
-        worker.start()
-
-    def _run_organizer_worker(
-        self,
-        selected_folder: Path,
-    ) -> None:
-        """Run the organizer service on a worker thread."""
-        try:
-            result = organize_directory(
+        if not self.operations.organize(
                 selected_folder
-            )
-
-        except (
-            FileNotFoundError,
-            NotADirectoryError,
-            PermissionError,
-            OSError,
-        ) as exc:
-            self.ui_queue.put(
-                (
-                    "organization_error",
-                    str(exc),
-                )
-            )
-            return
-
-        self.ui_queue.put(
-            (
-                "organization_result",
-                result,
-            )
-        )
+        ):
+            self._show_operation_in_progress_warning()
 
     def _handle_organization_result(
         self,
@@ -675,7 +647,7 @@ class MainWindow:
 
         self.refresh_treeview()
 
-        self._finish_operation(
+        self.set_status(
             (
                 "Organization complete — "
                 f"{result.moved} files moved."
@@ -692,7 +664,7 @@ class MainWindow:
             f"{message}"
         )
 
-        self._finish_operation(
+        self.set_status(
             "Organization failed."
         )
 
@@ -731,61 +703,10 @@ class MainWindow:
             )
             return
 
-        if not self._begin_operation(
-            "flatten"
+        if not self.operations.flatten(
+                selected_folder
         ):
-            return
-
-        self.flatten_cancel_event.clear()
-
-        self.log_to_text(
-            f"Flattening: "
-            f"{selected_folder}"
-        )
-
-        worker = threading.Thread(
-            target=self._run_flattener_worker,
-            args=(
-                selected_folder,
-            ),
-            daemon=True,
-        )
-
-        worker.start()
-
-    def _run_flattener_worker(
-        self,
-        selected_folder: Path,
-    ) -> None:
-        """Run the flattener service on a worker thread."""
-        try:
-            result = flatten_directory(
-                selected_folder,
-                cancel_event=(
-                    self.flatten_cancel_event
-                ),
-            )
-
-        except (
-            FileNotFoundError,
-            NotADirectoryError,
-            PermissionError,
-            OSError,
-        ) as exc:
-            self.ui_queue.put(
-                (
-                    "flatten_error",
-                    str(exc),
-                )
-            )
-            return
-
-        self.ui_queue.put(
-            (
-                "flatten_result",
-                result,
-            )
-        )
+            self._show_operation_in_progress_warning()
 
     def _handle_flatten_result(
         self,
@@ -861,7 +782,7 @@ class MainWindow:
 
         self.refresh_treeview()
 
-        self._finish_operation(
+        self.set_status(
             status
         )
 
@@ -875,7 +796,7 @@ class MainWindow:
             f"{message}"
         )
 
-        self._finish_operation(
+        self.set_status(
             "Flattening failed."
         )
 
@@ -887,87 +808,11 @@ class MainWindow:
 
     def stop_flattening(self) -> None:
         """Request cancellation of an active flatten operation."""
-        if (
-            self.current_operation
-            != "flatten"
-        ):
-            return
-
-        if (
-            self.flatten_cancel_event.is_set()
-        ):
-            return
-
-        self.flatten_cancel_event.set()
-
-        self.log_to_text(
-            "Cancel requested..."
-        )
-
-        self.set_status(
-            "Canceling flatten operation..."
-        )
-
-        self._update_action_states()
+        self.operations.cancel_flatten()
 
     # -------------------------------------------------------------------------
     # Operation state
     # -------------------------------------------------------------------------
-
-    def _begin_operation(
-        self,
-        operation: str,
-    ) -> bool:
-        """Start an application file operation."""
-        if (
-            self.current_operation
-            is not None
-        ):
-            show_warning(
-                self.root,
-                "Operation in Progress",
-                (
-                    "Another file operation is "
-                    "already running. Please wait "
-                    "for it to finish."
-                ),
-            )
-            return False
-
-        self.current_operation = (
-            operation
-        )
-
-        if operation == "organize":
-            self.set_status(
-                "Organizing files..."
-            )
-
-        elif operation == "flatten":
-            self.set_status(
-                "Flattening files..."
-            )
-
-        self.status_bar.start_progress()
-
-        self._update_action_states()
-
-        return True
-
-    def _finish_operation(
-        self,
-        status: str,
-    ) -> None:
-        """Finish the active application file operation."""
-        self.current_operation = None
-
-        self.status_bar.stop_progress()
-
-        self.set_status(
-            status
-        )
-
-        self._update_action_states()
 
     def _update_action_states(self) -> None:
         """Enable or disable commands based on application state."""
@@ -985,20 +830,7 @@ class MainWindow:
                 and selected_folder.is_dir()
         )
 
-        busy = (
-                self.current_operation
-                is not None
-        )
-
-        flattening = (
-                self.current_operation
-                == "flatten"
-        )
-
-        cancel_available = (
-                flattening
-                and not self.flatten_cancel_event.is_set()
-        )
+        busy = self.operations.is_busy
 
         select_enabled = (
             not busy
@@ -1018,15 +850,84 @@ class MainWindow:
         self.toolbar.set_states(
             select_enabled=select_enabled,
             operations_enabled=operations_enabled,
-            cancel_enabled=cancel_available,
+            cancel_enabled=(
+                self.operations.can_cancel
+            ),
             utilities_enabled=utilities_enabled,
         )
 
         self.menu_bar.set_states(
             select_enabled=select_enabled,
             operations_enabled=operations_enabled,
-            cancel_enabled=cancel_available,
+            cancel_enabled=(
+                self.operations.can_cancel
+            ),
             utilities_enabled=utilities_enabled,
+        )
+
+    def _handle_operation_started(
+            self,
+            operation: OperationName,
+            folder: Path,
+    ) -> None:
+        """Update the UI when a file operation begins."""
+        if operation == "organize":
+            self.set_status(
+                "Organizing files..."
+            )
+
+            self.log_to_text(
+                f"Organizing: {folder}"
+            )
+
+        elif operation == "flatten":
+            self.set_status(
+                "Flattening files..."
+            )
+
+            self.log_to_text(
+                f"Flattening: {folder}"
+            )
+
+        self.status_bar.start_progress()
+
+        self._update_action_states()
+
+    def _handle_operation_finished(
+            self,
+            operation: OperationName,
+    ) -> None:
+        """Update the UI after a file operation finishes."""
+        self.status_bar.stop_progress()
+
+        self._update_action_states()
+
+    def _handle_cancel_requested(
+            self,
+    ) -> None:
+        """Update the UI after a flatten cancellation request."""
+        self.log_to_text(
+            "Cancel requested..."
+        )
+
+        self.set_status(
+            "Canceling flatten operation..."
+        )
+
+        self._update_action_states()
+
+    def _show_operation_in_progress_warning(
+            self,
+    ) -> None:
+        """Warn that another file operation is already active."""
+        show_warning(
+            self.root,
+            "Operation in Progress",
+            (
+                "Another file operation is "
+                "already running. Please wait "
+                "for it to finish."
+            ),
         )
 
     # -------------------------------------------------------------------------
@@ -1035,7 +936,7 @@ class MainWindow:
 
     def _process_ui_queue(self) -> None:
         """
-        Process messages from worker threads.
+        Process application-shell messages.
 
         Only the Tkinter main thread updates widgets.
         """
@@ -1045,58 +946,12 @@ class MainWindow:
                     self.ui_queue.get_nowait()
                 )
 
-                if (
-                    event_name
-                    == "organization_result"
-                    and isinstance(
-                        payload,
-                        OrganizationResult,
-                    )
-                ):
-                    self._handle_organization_result(
-                        payload
-                    )
-
-                elif (
-                    event_name
-                    == "organization_error"
-                ):
-                    self._handle_organization_error(
-                        str(payload)
-                    )
-
-                elif (
-                    event_name
-                    == "flatten_result"
-                    and isinstance(
-                        payload,
-                        FlattenResult,
-                    )
-                ):
-                    self._handle_flatten_result(
-                        payload
-                    )
-
-                elif (
-                    event_name
-                    == "flatten_error"
-                ):
-                    self._handle_flatten_error(
-                        str(payload)
-                    )
-
-                elif (
-                    event_name
-                    == "show_window"
-                ):
+                if event_name == "show_window":
                     self.root.deiconify()
                     self.root.lift()
                     self.root.focus_force()
 
-                elif (
-                    event_name
-                    == "exit_application"
-                ):
+                elif event_name == "exit_application":
                     self.root.deiconify()
                     self.root.lift()
 
@@ -1251,7 +1106,7 @@ class MainWindow:
 
     def exit_app(self) -> None:
         """Close the application safely."""
-        if self.current_operation is not None:
+        if self.operations.is_busy:
             show_warning(
                 self.root,
                 "Operation in Progress",
@@ -1267,6 +1122,8 @@ class MainWindow:
             return
 
         self.is_closing = True
+
+        self.operations.shutdown()
 
         self.tray_manager.stop()
 
