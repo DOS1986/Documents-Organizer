@@ -10,6 +10,13 @@ from documents_organizer.controllers.operation_controller import (
     OperationController,
     OperationName,
 )
+from documents_organizer.presenters.operation_presenter import (
+    OperationPresentation,
+    present_flatten_error,
+    present_flatten_result,
+    present_organization_error,
+    present_organization_result,
+)
 from documents_organizer.platform_utils import open_in_file_manager
 from documents_organizer.resources import get_image_path
 from documents_organizer.services.flattener import FlattenResult
@@ -37,6 +44,7 @@ from documents_organizer.ui.dialogs import (
 )
 from documents_organizer.ui.styles import configure_styles
 from documents_organizer.ui.tray_manager import TrayManager
+
 
 
 class MainWindow:
@@ -450,61 +458,9 @@ class MainWindow:
         result: OrganizationResult,
     ) -> None:
         """Display organizer results."""
-        for extension, count in sorted(
-            result.by_extension.items()
-        ):
-            label = (
-                "file"
-                if count == 1
-                else "files"
-            )
-
-            self.log_to_text(
-                f"Organized {count} "
-                f"{extension} {label}."
-            )
-
-        if result.skipped:
-            label = (
-                "file"
-                if result.skipped == 1
-                else "files"
-            )
-
-            self.log_to_text(
-                f"Skipped "
-                f"{result.skipped} {label}."
-            )
-
-        if result.failed:
-            label = (
-                "failure"
-                if result.failed == 1
-                else "failures"
-            )
-
-            self.log_to_text(
-                f"Encountered "
-                f"{result.failed} {label}."
-            )
-
-            for failure in result.failures:
-                self.log_to_text(
-                    f"  {failure.path}: "
-                    f"{failure.error}"
-                )
-
-        self.log_to_text(
-            f"Organization complete. "
-            f"{result.moved} files moved."
-        )
-
-        self.refresh_treeview()
-
-        self.set_status(
-            (
-                "Organization complete — "
-                f"{result.moved} files moved."
+        self._write_completed_operation_presentation(
+            present_organization_result(
+                result
             )
         )
 
@@ -513,14 +469,17 @@ class MainWindow:
         message: str,
     ) -> None:
         """Display a fatal organizer error."""
-        self.log_to_text(
-            f"Organization failed: "
-            f"{message}"
+        self._write_operation_presentation(
+            present_organization_error(
+                message
+            )
         )
 
-        self.set_status("Organization failed.")
-
-        show_error(self.root, "Organization Failed", message)
+        show_error(
+            self.root,
+            "Organization Failed",
+            message,
+        )
 
     # -------------------------------------------------------------------------
     # Flattener
@@ -559,88 +518,22 @@ class MainWindow:
         result: FlattenResult,
     ) -> None:
         """Display flattener results."""
-        for extension, count in sorted(
-            result.by_extension.items()
-        ):
-            label = (
-                "file"
-                if count == 1
-                else "files"
+        self._write_completed_operation_presentation(
+            present_flatten_result(
+                result
             )
-
-            self.log_to_text(
-                f"Flattened {count} "
-                f"{extension} {label}."
-            )
-
-        if result.skipped:
-            label = (
-                "file"
-                if result.skipped == 1
-                else "files"
-            )
-
-            self.log_to_text(
-                f"Skipped "
-                f"{result.skipped} {label} "
-                "that did not match their "
-                "file-type folder."
-            )
-
-        if result.failed:
-            label = (
-                "failure"
-                if result.failed == 1
-                else "failures"
-            )
-
-            self.log_to_text(
-                f"Encountered "
-                f"{result.failed} {label}."
-            )
-
-            for failure in result.failures:
-                self.log_to_text(
-                    f"  {failure.path}: "
-                    f"{failure.error}"
-                )
-
-        if result.cancelled:
-            self.log_to_text(
-                "Flattening canceled."
-            )
-
-            status = "Flattening canceled."
-
-        else:
-            self.log_to_text(
-                f"Flattening complete. "
-                f"{result.moved} files moved "
-                f"and "
-                f"{result.directories_removed} "
-                f"empty folders removed."
-            )
-
-            status = (
-                "Flattening complete — "
-                f"{result.moved} files moved."
-            )
-
-        self.refresh_treeview()
-
-        self.set_status(status)
+        )
 
     def _handle_flatten_error(
         self,
         message: str,
     ) -> None:
         """Display a fatal flattener error."""
-        self.log_to_text(
-            f"Flattening failed: "
-            f"{message}"
+        self._write_operation_presentation(
+            present_flatten_error(
+                message
+            )
         )
-
-        self.set_status("Flattening failed.")
 
         show_error(
             self.root,
@@ -758,6 +651,40 @@ class MainWindow:
                 "already running. Please wait "
                 "for it to finish."
             ),
+        )
+
+    # -------------------------------------------------------------------------
+    # Operation Presenter state
+    # -------------------------------------------------------------------------
+
+    def _write_operation_presentation(
+        self,
+        presentation: OperationPresentation,
+    ) -> None:
+        """Write operation presentation messages to the UI."""
+        for message in presentation.log_messages:
+            self.activity_log.write(
+                message
+            )
+
+        self.status_bar.set_status(
+            presentation.status
+        )
+
+    def _write_completed_operation_presentation(
+            self,
+            presentation: OperationPresentation,
+    ) -> None:
+        """Write a completed operation result and refresh the browser."""
+        for message in presentation.log_messages:
+            self.activity_log.write(
+                message
+            )
+
+        self.refresh_treeview()
+
+        self.status_bar.set_status(
+            presentation.status
         )
 
     # -------------------------------------------------------------------------
