@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-import os
+
 import queue
 import threading
 import tkinter as tk
-import tkinter.scrolledtext as scrolledtext
-from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, ttk
 
@@ -35,6 +33,11 @@ from documents_organizer.settings import (
     UI_QUEUE_POLL_INTERVAL_MS,
     WINDOW_ICON_FILE,
 )
+from documents_organizer.ui.components.activity_log import ActivityLog
+from documents_organizer.ui.components.folder_browser import FolderBrowser
+from documents_organizer.ui.components.folder_summary import FolderSummary
+from documents_organizer.ui.components.status_bar import StatusBar
+from documents_organizer.ui.components.toolbar import Toolbar
 from documents_organizer.ui.dialogs import (
     show_about as show_about_dialog,
     show_error,
@@ -60,17 +63,6 @@ class MainWindow:
         ] = queue.Queue()
 
         # UI state.
-        self.root_folder_var = tk.StringVar(
-            value="No folder selected"
-        )
-
-        self.target_folder_var = tk.StringVar(
-            value="No folder selected"
-        )
-
-        self.status_var = tk.StringVar(
-            value="Ready"
-        )
 
         self._configure_window()
         self._configure_styles()
@@ -432,11 +424,18 @@ class MainWindow:
 
     def _create_toolbar(self) -> None:
         """Create the main action toolbar."""
-        toolbar = ttk.Frame(
-            self.main_frame
+        self.toolbar = Toolbar(
+            self.main_frame,
+            on_select_folder=self.select_folder,
+            on_organize=self.run_organizer,
+            on_flatten=self.run_flattener,
+            on_cancel=self.stop_flattening,
+            on_open_selected=self.open_selected_folder,
+            on_refresh=self.refresh_treeview,
+            on_clear_log=self.clear_log,
         )
 
-        toolbar.grid(
+        self.toolbar.grid(
             row=1,
             column=0,
             sticky="ew",
@@ -446,142 +445,13 @@ class MainWindow:
             ),
         )
 
-        # Flexible space between file operations and utility actions.
-        toolbar.columnconfigure(
-            5,
-            weight=1,
-        )
-
-        self.select_folder_button = ttk.Button(
-            toolbar,
-            text="Select Folder",
-            command=self.select_folder,
-            style="Primary.TButton",
-        )
-
-        self.select_folder_button.grid(
-            row=0,
-            column=0,
-            padx=(
-                0,
-                6,
-            ),
-        )
-
-        first_separator = ttk.Separator(
-            toolbar,
-            orient=tk.VERTICAL,
-        )
-
-        first_separator.grid(
-            row=0,
-            column=1,
-            sticky="ns",
-            padx=8,
-        )
-
-        self.organize_button = ttk.Button(
-            toolbar,
-            text="Organize",
-            command=self.run_organizer,
-            style="Toolbar.TButton",
-        )
-
-        self.organize_button.grid(
-            row=0,
-            column=2,
-            padx=6,
-        )
-
-        self.flatten_button = ttk.Button(
-            toolbar,
-            text="Flatten",
-            command=self.run_flattener,
-            style="Toolbar.TButton",
-        )
-
-        self.flatten_button.grid(
-            row=0,
-            column=3,
-            padx=6,
-        )
-
-        self.cancel_button = ttk.Button(
-            toolbar,
-            text="Cancel",
-            command=self.stop_flattening,
-            style="Toolbar.TButton",
-        )
-
-        self.cancel_button.grid(
-            row=0,
-            column=4,
-            padx=6,
-        )
-
-        second_separator = ttk.Separator(
-            toolbar,
-            orient=tk.VERTICAL,
-        )
-
-        second_separator.grid(
-            row=0,
-            column=6,
-            sticky="ns",
-            padx=8,
-        )
-
-        self.open_folder_button = ttk.Button(
-            toolbar,
-            text="Open Selected",
-            command=self.open_selected_folder,
-            style="Toolbar.TButton",
-        )
-
-        self.open_folder_button.grid(
-            row=0,
-            column=7,
-            padx=6,
-        )
-
-        self.refresh_button = ttk.Button(
-            toolbar,
-            text="Refresh",
-            command=self.refresh_treeview,
-            style="Toolbar.TButton",
-        )
-
-        self.refresh_button.grid(
-            row=0,
-            column=8,
-            padx=6,
-        )
-
-        self.clear_log_button = ttk.Button(
-            toolbar,
-            text="Clear Log",
-            command=self.clear_log,
-            style="Toolbar.TButton",
-        )
-
-        self.clear_log_button.grid(
-            row=0,
-            column=9,
-            padx=(
-                6,
-                0,
-            ),
-        )
-
     def _create_folder_summary(self) -> None:
-        """Create the current-folder summary panel."""
-        folder_frame = ttk.LabelFrame(
-            self.main_frame,
-            text="Selected Location",
-            style="Section.TLabelframe",
+        """Create the selected-location summary."""
+        self.folder_summary = FolderSummary(
+            self.main_frame
         )
 
-        folder_frame.grid(
+        self.folder_summary.grid(
             row=2,
             column=0,
             sticky="ew",
@@ -591,59 +461,21 @@ class MainWindow:
             ),
         )
 
-        folder_frame.columnconfigure(
-            1,
-            weight=1,
-        )
-
-        ttk.Label(
-            folder_frame,
-            text="Root Folder:",
-        ).grid(
-            row=0,
-            column=0,
-            sticky="nw",
-            padx=(
-                0,
-                10,
+    def _create_folder_browser(self) -> None:
+        """Create the folder browser component."""
+        self.folder_browser = FolderBrowser(
+            self.paned_window,
+            on_selection_changed=(
+                self._on_folder_selection_changed
             ),
-            pady=2,
-        )
-
-        ttk.Label(
-            folder_frame,
-            textvariable=self.root_folder_var,
-            style="PathLabel.TLabel",
-        ).grid(
-            row=0,
-            column=1,
-            sticky="ew",
-            pady=2,
-        )
-
-        ttk.Label(
-            folder_frame,
-            text="Operation Target:",
-        ).grid(
-            row=1,
-            column=0,
-            sticky="nw",
-            padx=(
-                0,
-                10,
+            on_open_selected=(
+                self._open_folder_path
             ),
-            pady=2,
         )
 
-        ttk.Label(
-            folder_frame,
-            textvariable=self.target_folder_var,
-            style="PathLabel.TLabel",
-        ).grid(
-            row=1,
-            column=1,
-            sticky="ew",
-            pady=2,
+        self.paned_window.add(
+            self.folder_browser,
+            weight=2,
         )
 
     def _create_workspace(self) -> None:
@@ -659,146 +491,22 @@ class MainWindow:
             sticky="nsew",
         )
 
-        self._create_tree_panel()
+        self._create_folder_browser()
         self._create_log_panel()
-
-    def _create_tree_panel(self) -> None:
-        """Create the folder browser panel."""
-        tree_frame = ttk.LabelFrame(
-            self.paned_window,
-            text="Folder Browser",
-            style="Section.TLabelframe",
-        )
-
-        self.paned_window.add(
-            tree_frame,
-            weight=2,
-        )
-
-        tree_frame.rowconfigure(
-            0,
-            weight=1,
-        )
-
-        tree_frame.columnconfigure(
-            0,
-            weight=1,
-        )
-
-        self.tree = ttk.Treeview(
-            tree_frame,
-            show="tree",
-            selectmode="browse",
-        )
-
-        tree_scrollbar = ttk.Scrollbar(
-            tree_frame,
-            orient=tk.VERTICAL,
-            command=self.tree.yview,
-        )
-
-        horizontal_scrollbar = ttk.Scrollbar(
-            tree_frame,
-            orient=tk.HORIZONTAL,
-            command=self.tree.xview,
-        )
-
-        self.tree.configure(
-            yscrollcommand=tree_scrollbar.set,
-            xscrollcommand=horizontal_scrollbar.set,
-        )
-
-        self.tree.grid(
-            row=0,
-            column=0,
-            sticky="nsew",
-        )
-
-        tree_scrollbar.grid(
-            row=0,
-            column=1,
-            sticky="ns",
-        )
-
-        horizontal_scrollbar.grid(
-            row=1,
-            column=0,
-            sticky="ew",
-        )
-
-        self.tree.bind(
-            "<<TreeviewSelect>>",
-            self._on_tree_selection,
-        )
-
-        self.tree.bind(
-            "<Button-3>",
-            self.popup_menu,
-        )
-
-        self.tree_empty_label = ttk.Label(
-            tree_frame,
-            text=(
-                "No folder selected\n\n"
-                "Choose Select Folder to begin."
-            ),
-            anchor="center",
-            justify="center",
-        )
-
-        self.tree_empty_label.place(
-            relx=0.5,
-            rely=0.5,
-            anchor="center",
-        )
 
     def _create_log_panel(self) -> None:
         """Create the activity log panel."""
-        log_frame = ttk.LabelFrame(
-            self.paned_window,
-            text="Activity Log",
-            style="Section.TLabelframe",
+        self.activity_log = ActivityLog(
+            self.paned_window
         )
 
         self.paned_window.add(
-            log_frame,
+            self.activity_log,
             weight=3,
         )
 
-        log_frame.rowconfigure(
-            0,
-            weight=1,
-        )
-
-        log_frame.columnconfigure(
-            0,
-            weight=1,
-        )
-
-        self.log_text = (
-            scrolledtext.ScrolledText(
-                log_frame,
-                wrap=tk.WORD,
-                state=tk.DISABLED,
-                font=(
-                    "Consolas",
-                    10,
-                ),
-                padx=10,
-                pady=10,
-                relief=tk.SOLID,
-                borderwidth=1,
-            )
-        )
-
-        self.log_text.grid(
-            row=0,
-            column=0,
-            sticky="nsew",
-        )
-
     def _create_status_bar(self) -> None:
-        """Create the bottom status bar."""
+        """Create the bottom application status area."""
         separator = ttk.Separator(
             self.main_frame,
             orient=tk.HORIZONTAL,
@@ -814,61 +522,14 @@ class MainWindow:
             ),
         )
 
-        status_frame = ttk.Frame(
+        self.status_bar = StatusBar(
             self.main_frame
         )
 
-        status_frame.grid(
+        self.status_bar.grid(
             row=5,
             column=0,
             sticky="ew",
-        )
-
-        status_frame.columnconfigure(
-            0,
-            weight=1,
-        )
-
-        status_label = ttk.Label(
-            status_frame,
-            textvariable=self.status_var,
-            style="Status.TLabel",
-        )
-
-        status_label.grid(
-            row=0,
-            column=0,
-            sticky="w",
-        )
-
-        self.progress_bar = ttk.Progressbar(
-            status_frame,
-            mode="indeterminate",
-            length=180,
-        )
-
-        self.progress_bar.grid(
-            row=0,
-            column=1,
-            sticky="e",
-            padx=(
-                10,
-                16,
-            ),
-        )
-
-        self.progress_bar.grid_remove()
-
-        version_label = ttk.Label(
-            status_frame,
-            text=f"v{__version__}",
-            style="Version.TLabel",
-        )
-
-        version_label.grid(
-            row=0,
-            column=2,
-            sticky="e",
         )
 
     # -------------------------------------------------------------------------
@@ -889,31 +550,42 @@ class MainWindow:
             return
 
         selected_folder = filedialog.askdirectory(
-            title="Select Folder to Organize",
+            title="Select Folder",
         )
 
         if not selected_folder:
             return
 
-        self.folder_path = Path(
+        folder = Path(
             selected_folder
         ).resolve()
 
-        self.root_folder_var.set(
-            str(self.folder_path)
-        )
+        try:
+            self.folder_browser.load(
+                folder
+            )
 
-        self.target_folder_var.set(
-            str(self.folder_path)
-        )
+        except (
+                FileNotFoundError,
+                NotADirectoryError,
+                PermissionError,
+                OSError,
+        ) as exc:
+            show_error(
+                self.root,
+                "Unable to Open Folder",
+                str(exc),
+            )
+            return
 
-        self.update_treeview(
-            self.folder_path
+        self.folder_path = folder
+
+        self.folder_summary.set_root(
+            folder
         )
 
         self.log_to_text(
-            f"Selected folder: "
-            f"{self.folder_path}"
+            f"Selected folder: {folder}"
         )
 
         self.set_status(
@@ -922,201 +594,45 @@ class MainWindow:
 
         self._update_action_states()
 
-    def update_treeview(
-        self,
-        directory: Path | str,
-    ) -> None:
-        """Update the folder tree with a directory structure."""
-        directory = Path(
-            directory
-        ).resolve()
-
-        self.tree_empty_label.place_forget()
-
-        self.tree.delete(
-            *self.tree.get_children()
-        )
-
-        root_node = self.populate_tree(
-            directory
-        )
-
-        self.tree.selection_set(
-            root_node
-        )
-
-        self.tree.focus(
-            root_node
-        )
-
-        self.tree.see(
-            root_node
-        )
-
-        self.target_folder_var.set(
-            str(directory)
-        )
-
-    def populate_tree(
-        self,
-        directory: Path,
-    ) -> str:
-        """Populate the root directory in the Treeview."""
-        root_node = self.tree.insert(
-            "",
-            "end",
-            text=str(directory),
-            open=True,
-        )
-
-        self.populate_children(
-            root_node,
-            directory,
-        )
-
-        return root_node
-
-    def populate_children(
-        self,
-        parent: str,
-        directory: Path,
-    ) -> None:
-        """Populate subdirectories beneath a Treeview node."""
-        try:
-            items = sorted(
-                directory.iterdir(),
-                key=lambda path: (
-                    path.name.lower()
-                ),
-            )
-
-        except (
-            PermissionError,
-            FileNotFoundError,
-            OSError,
-        ):
-            return
-
-        for item_path in items:
-            if not item_path.is_dir():
-                continue
-
-            node = self.tree.insert(
-                parent,
-                "end",
-                text=item_path.name,
-            )
-
-            self.populate_children(
-                node,
-                item_path,
-            )
-
     def refresh_treeview(self) -> None:
         """Refresh the displayed folder tree."""
         if self.folder_path is None:
             return
 
-        if not self.folder_path.is_dir():
+        try:
+            self.folder_browser.refresh()
+
+        except (
+                FileNotFoundError,
+                NotADirectoryError,
+                PermissionError,
+                OSError,
+        ) as exc:
             show_error(
                 self.root,
                 "Folder Unavailable",
-                (
-                    "The selected root folder "
-                    "no longer exists."
-                ),
+                str(exc),
             )
             return
-
-        self.update_treeview(
-            self.folder_path
-        )
 
         self.set_status(
             "Folder tree refreshed."
         )
 
-    def _on_tree_selection(
-        self,
-        event: tk.Event | None = None,
+    def _on_folder_selection_changed(
+            self,
+            selected_folder: Path | None,
     ) -> None:
-        """Update the displayed operation target."""
-        selected_folder = (
-            self.get_selected_folder()
-        )
-
+        """Handle changes to the folder browser selection."""
         if selected_folder is None:
-            self.target_folder_var.set(
-                "No folder selected"
-            )
+            self.folder_summary.clear_target()
+
         else:
-            self.target_folder_var.set(
-                str(selected_folder)
+            self.folder_summary.set_target(
+                selected_folder
             )
 
         self._update_action_states()
-
-    def get_selected_folder(
-        self,
-    ) -> Path | None:
-        """Return the path represented by the selected Treeview item."""
-        selected_items = (
-            self.tree.selection()
-        )
-
-        if not selected_items:
-            focused_item = (
-                self.tree.focus()
-            )
-
-            if not focused_item:
-                return None
-
-            selected_item = (
-                focused_item
-            )
-
-        else:
-            selected_item = (
-                selected_items[0]
-            )
-
-        return self.get_full_path(
-            selected_item
-        )
-
-    def get_full_path(
-        self,
-        item: str,
-    ) -> Path:
-        """Build the filesystem path represented by a Treeview item."""
-        path_components = [
-            self.tree.item(
-                item
-            )["text"]
-        ]
-
-        parent = self.tree.parent(
-            item
-        )
-
-        while parent:
-            path_components.insert(
-                0,
-                self.tree.item(
-                    parent
-                )["text"],
-            )
-
-            parent = self.tree.parent(
-                parent
-            )
-
-        return Path(
-            os.path.join(
-                *path_components
-            )
-        ).resolve()
 
     # -------------------------------------------------------------------------
     # Organizer
@@ -1125,7 +641,7 @@ class MainWindow:
     def run_organizer(self) -> None:
         """Start an organize operation for the selected folder."""
         selected_folder = (
-            self.get_selected_folder()
+            self.folder_browser.selected_path
         )
 
         if selected_folder is None:
@@ -1288,7 +804,7 @@ class MainWindow:
     def run_flattener(self) -> None:
         """Start a flatten operation for the selected folder."""
         selected_folder = (
-            self.get_selected_folder()
+            self.folder_browser.selected_path
         )
 
         if selected_folder is None:
@@ -1527,11 +1043,7 @@ class MainWindow:
                 "Flattening files..."
             )
 
-        self.progress_bar.grid()
-
-        self.progress_bar.start(
-            12
-        )
+        self.status_bar.start_progress()
 
         self._update_action_states()
 
@@ -1544,9 +1056,7 @@ class MainWindow:
         """Finish the active application file operation."""
         self.current_operation = None
 
-        self.progress_bar.stop()
-
-        self.progress_bar.grid_remove()
+        self.status_bar.stop_progress()
 
         self.set_status(
             status
@@ -1556,100 +1066,117 @@ class MainWindow:
 
     def _update_action_states(self) -> None:
         """Enable or disable commands based on application state."""
-        folder_available = (
-            self.folder_path is not None
-            and self.folder_path.is_dir()
+        root_available = (
+                self.folder_path is not None
+                and self.folder_path.is_dir()
+        )
+
+        selected_folder = (
+            self.folder_browser.selected_path
+        )
+
+        target_available = (
+                selected_folder is not None
+                and selected_folder.is_dir()
         )
 
         busy = (
-            self.current_operation
-            is not None
+                self.current_operation
+                is not None
         )
 
         flattening = (
-            self.current_operation
-            == "flatten"
+                self.current_operation
+                == "flatten"
         )
 
         cancel_available = (
-            flattening
-            and not self.flatten_cancel_event.is_set()
+                flattening
+                and not self.flatten_cancel_event.is_set()
         )
 
-        select_state = (
-            tk.DISABLED
-            if busy
-            else tk.NORMAL
+        select_enabled = (
+            not busy
         )
 
-        operation_state = (
-            tk.NORMAL
-            if folder_available
-            and not busy
-            else tk.DISABLED
+        operations_enabled = (
+                target_available
+                and not busy
         )
 
-        utility_state = (
-            tk.NORMAL
-            if folder_available
-            and not busy
-            else tk.DISABLED
+        utilities_enabled = (
+                target_available
+                and root_available
+                and not busy
         )
 
-        cancel_state = (
-            tk.NORMAL
-            if cancel_available
-            else tk.DISABLED
+        self.toolbar.set_states(
+            select_enabled=select_enabled,
+            operations_enabled=operations_enabled,
+            cancel_enabled=cancel_available,
+            utilities_enabled=utilities_enabled,
         )
 
-        self.select_folder_button.configure(
-            state=select_state
+        self._update_menu_states(
+            select_enabled=select_enabled,
+            operations_enabled=operations_enabled,
+            cancel_enabled=cancel_available,
+            utilities_enabled=utilities_enabled,
         )
 
-        self.organize_button.configure(
-            state=operation_state
-        )
-
-        self.flatten_button.configure(
-            state=operation_state
-        )
-
-        self.cancel_button.configure(
-            state=cancel_state
-        )
-
-        self.open_folder_button.configure(
-            state=utility_state
-        )
-
-        self.refresh_button.configure(
-            state=utility_state
-        )
-
-        # Menus
+    def _update_menu_states(
+            self,
+            *,
+            select_enabled: bool,
+            operations_enabled: bool,
+            cancel_enabled: bool,
+            utilities_enabled: bool,
+    ) -> None:
+        """Update menu item states."""
         self.file_menu.entryconfig(
             0,
-            state=select_state,
+            state=self._menu_state(
+                select_enabled
+            ),
         )
 
         self.organize_menu.entryconfig(
             0,
-            state=operation_state,
+            state=self._menu_state(
+                operations_enabled
+            ),
         )
 
         self.organize_menu.entryconfig(
             1,
-            state=operation_state,
+            state=self._menu_state(
+                operations_enabled
+            ),
         )
 
         self.organize_menu.entryconfig(
             3,
-            state=cancel_state,
+            state=self._menu_state(
+                cancel_enabled
+            ),
         )
 
         self.view_menu.entryconfig(
             1,
-            state=utility_state,
+            state=self._menu_state(
+                utilities_enabled
+            ),
+        )
+
+    @staticmethod
+    def _menu_state(
+            enabled: bool,
+    ) -> str:
+        """Convert a boolean to a Tkinter menu state."""
+        return (
+            tk.NORMAL
+            if enabled
+            else tk.DISABLED
         )
 
     # -------------------------------------------------------------------------
@@ -1728,21 +1255,22 @@ class MainWindow:
         except queue.Empty:
             pass
 
-        self.root.after(
-            UI_QUEUE_POLL_INTERVAL_MS,
-            self._process_ui_queue,
-        )
+        if not self.is_closing:
+            self.root.after(
+                UI_QUEUE_POLL_INTERVAL_MS,
+                self._process_ui_queue,
+            )
 
     # -------------------------------------------------------------------------
     # Status and activity log
     # -------------------------------------------------------------------------
 
     def set_status(
-        self,
-        message: str,
+            self,
+            message: str,
     ) -> None:
         """Update the application status message."""
-        self.status_var.set(
+        self.status_bar.set_status(
             message
         )
 
@@ -1757,52 +1285,19 @@ class MainWindow:
         )
 
     def log_to_text(
-        self,
-        message: str,
+            self,
+            message: str,
     ) -> None:
-        """Append a timestamped message to the activity log."""
-        timestamp = (
-            datetime.now().strftime(
-                "%H:%M:%S"
-            )
-        )
-
-        self.log_text.configure(
-            state=tk.NORMAL
-        )
-
-        self.log_text.insert(
-            tk.END,
-            (
-                f"[{timestamp}] "
-                f"{message}\n"
-            ),
-        )
-
-        self.log_text.configure(
-            state=tk.DISABLED
-        )
-
-        self.log_text.see(
-            tk.END
+        """Write a message to the activity log."""
+        self.activity_log.write(
+            message
         )
 
     def clear_log(self) -> None:
         """Clear the activity log."""
-        self.log_text.configure(
-            state=tk.NORMAL
-        )
+        self.activity_log.clear()
 
-        self.log_text.delete(
-            "1.0",
-            tk.END,
-        )
-
-        self.log_text.configure(
-            state=tk.DISABLED
-        )
-
-        self.log_to_text(
+        self.activity_log.write(
             "Activity log cleared."
         )
 
@@ -1810,47 +1305,10 @@ class MainWindow:
     # File manager
     # -------------------------------------------------------------------------
 
-    def popup_menu(
-        self,
-        event: tk.Event,
-    ) -> None:
-        """Display the folder context menu."""
-        selected_item = (
-            self.tree.identify_row(
-                event.y
-            )
-        )
-
-        if not selected_item:
-            return
-
-        self.tree.selection_set(
-            selected_item
-        )
-
-        self.tree.focus(
-            selected_item
-        )
-
-        popup = tk.Menu(
-            self.root,
-            tearoff=0,
-        )
-
-        popup.add_command(
-            label="Open in File Manager",
-            command=self.open_selected_folder,
-        )
-
-        popup.post(
-            event.x_root,
-            event.y_root,
-        )
-
     def open_selected_folder(self) -> None:
         """Open the selected folder in the platform file manager."""
         selected_folder = (
-            self.get_selected_folder()
+            self.folder_browser.selected_path
         )
 
         if selected_folder is None:
@@ -1861,15 +1319,24 @@ class MainWindow:
             )
             return
 
+        self._open_folder_path(
+            selected_folder
+        )
+
+    def _open_folder_path(
+            self,
+            folder: Path,
+    ) -> None:
+        """Open a folder using the platform file manager."""
         try:
             open_in_file_manager(
-                selected_folder
+                folder
             )
 
         except (
-            FileNotFoundError,
-            NotADirectoryError,
-            OSError,
+                FileNotFoundError,
+                NotADirectoryError,
+                OSError,
         ) as exc:
             show_error(
                 self.root,
