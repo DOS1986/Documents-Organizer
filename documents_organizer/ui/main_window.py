@@ -1,14 +1,19 @@
 from __future__ import annotations
 
-
 import queue
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, ttk
 
 from documents_organizer import __version__
+from documents_organizer.controllers.operation_controller import (
+    OperationController,
+    OperationName,
+)
 from documents_organizer.platform_utils import open_in_file_manager
 from documents_organizer.resources import get_image_path
+from documents_organizer.services.flattener import FlattenResult
+from documents_organizer.services.organizer import OrganizationResult
 from documents_organizer.settings import (
     APP_NAME,
     DEFAULT_WINDOW_HEIGHT,
@@ -18,26 +23,20 @@ from documents_organizer.settings import (
     UI_QUEUE_POLL_INTERVAL_MS,
     WINDOW_ICON_FILE,
 )
-
-from documents_organizer.services.flattener import FlattenResult
-from documents_organizer.services.organizer import OrganizationResult
-
 from documents_organizer.ui.components.activity_log import ActivityLog
 from documents_organizer.ui.components.folder_browser import FolderBrowser
 from documents_organizer.ui.components.folder_summary import FolderSummary
+from documents_organizer.ui.components.header import Header
 from documents_organizer.ui.components.menu_bar import MenuBar
 from documents_organizer.ui.components.status_bar import StatusBar
-from documents_organizer.ui.tray_manager import TrayManager
 from documents_organizer.ui.components.toolbar import Toolbar
-from documents_organizer.controllers.operation_controller import (
-    OperationController,
-    OperationName,
-)
 from documents_organizer.ui.dialogs import (
     show_about as show_about_dialog,
     show_error,
     show_warning,
 )
+from documents_organizer.ui.styles import configure_styles
+from documents_organizer.ui.tray_manager import TrayManager
 
 
 class MainWindow:
@@ -49,24 +48,21 @@ class MainWindow:
         self.folder_path: Path | None = None
         self.is_closing = False
 
-        # Worker threads communicate with Tkinter through this queue.
         self.ui_queue: queue.Queue[
             tuple[str, object]
         ] = queue.Queue()
 
         self.tray_manager = TrayManager(
-            on_show_requested=(
-                self._request_show_window
-            ),
-            on_exit_requested=(
-                self._request_exit_application
-            ),
+            on_show_requested=self._request_show_window,
+            on_exit_requested=self._request_exit_application,
         )
 
-        # UI state.
-
         self._configure_window()
-        self._configure_styles()
+
+        configure_styles(
+            self.root
+        )
+
         self._create_menu_bar()
         self._create_layout()
         self._bind_events()
@@ -75,21 +71,11 @@ class MainWindow:
             self.root,
             on_started=self._handle_operation_started,
             on_finished=self._handle_operation_finished,
-            on_cancel_requested=(
-                self._handle_cancel_requested
-            ),
-            on_organization_result=(
-                self._handle_organization_result
-            ),
-            on_organization_error=(
-                self._handle_organization_error
-            ),
-            on_flatten_result=(
-                self._handle_flatten_result
-            ),
-            on_flatten_error=(
-                self._handle_flatten_error
-            ),
+            on_cancel_requested=self._handle_cancel_requested,
+            on_organization_result=self._handle_organization_result,
+            on_organization_error=self._handle_organization_error,
+            on_flatten_result=self._handle_flatten_result,
+            on_flatten_error=self._handle_flatten_error,
         )
 
         self._log_startup_message()
@@ -134,92 +120,6 @@ class MainWindow:
             OSError,
         ):
             pass
-
-    def _configure_styles(self) -> None:
-        """Configure ttk styles used by the application."""
-        style = ttk.Style(
-            self.root
-        )
-
-        style.configure(
-            "AppTitle.TLabel",
-            font=(
-                "Segoe UI",
-                18,
-                "bold",
-            ),
-        )
-
-        style.configure(
-            "AppSubtitle.TLabel",
-            font=(
-                "Segoe UI",
-                10,
-            ),
-        )
-
-        style.configure(
-            "Version.TLabel",
-            font=(
-                "Segoe UI",
-                9,
-            ),
-        )
-
-        style.configure(
-            "Toolbar.TButton",
-            padding=(
-                10,
-                7,
-            ),
-        )
-
-        style.configure(
-            "Primary.TButton",
-            padding=(
-                12,
-                7,
-            ),
-        )
-
-        style.configure(
-            "Section.TLabelframe",
-            padding=10,
-        )
-
-        style.configure(
-            "Section.TLabelframe.Label",
-            font=(
-                "Segoe UI",
-                10,
-                "bold",
-            ),
-        )
-
-        style.configure(
-            "PathLabel.TLabel",
-            font=(
-                "Segoe UI",
-                9,
-            ),
-        )
-
-        style.configure(
-            "Status.TLabel",
-            padding=(
-                4,
-                2,
-            ),
-        )
-
-        style.configure(
-            "Treeview",
-            rowheight=26,
-            font=(
-                "Segoe UI",
-                10,
-            ),
-        )
 
     def _bind_events(self) -> None:
         """Bind application-level events."""
@@ -295,53 +195,17 @@ class MainWindow:
 
     def _create_header(self) -> None:
         """Create the application header."""
-        header = ttk.Frame(
+        self.header = Header(
             self.main_frame
         )
 
-        header.grid(
+        self.header.grid(
             row=0,
             column=0,
             sticky="ew",
             pady=(
                 0,
                 12,
-            ),
-        )
-
-        header.columnconfigure(
-            0,
-            weight=1,
-        )
-
-        title = ttk.Label(
-            header,
-            text=APP_NAME,
-            style="AppTitle.TLabel",
-        )
-
-        title.grid(
-            row=0,
-            column=0,
-            sticky="w",
-        )
-
-        subtitle = ttk.Label(
-            header,
-            text=(
-                "Organize files by modified date "
-                "and file type."
-            ),
-            style="AppSubtitle.TLabel",
-        )
-
-        subtitle.grid(
-            row=1,
-            column=0,
-            sticky="w",
-            pady=(
-                2,
-                0,
             ),
         )
 
@@ -472,9 +336,7 @@ class MainWindow:
             )
             return
 
-        selected_folder = filedialog.askdirectory(
-            title="Select Folder",
-        )
+        selected_folder = filedialog.askdirectory(title="Select Folder")
 
         if not selected_folder:
             return
@@ -507,13 +369,9 @@ class MainWindow:
             folder
         )
 
-        self.log_to_text(
-            f"Selected folder: {folder}"
-        )
+        self.log_to_text(f"Selected folder: {folder}")
 
-        self.set_status(
-            "Folder selected."
-        )
+        self.set_status("Folder selected.")
 
         self._update_action_states()
 
@@ -538,13 +396,11 @@ class MainWindow:
             )
             return
 
-        self.set_status(
-            "Folder tree refreshed."
-        )
+        self.set_status("Folder tree refreshed.")
 
     def _on_folder_selection_changed(
-            self,
-            selected_folder: Path | None,
+        self,
+        selected_folder: Path | None,
     ) -> None:
         """Handle changes to the folder browser selection."""
         if selected_folder is None:
@@ -563,9 +419,7 @@ class MainWindow:
 
     def run_organizer(self) -> None:
         """Start an organize operation for the selected folder."""
-        selected_folder = (
-            self.folder_browser.selected_path
-        )
+        selected_folder = self.folder_browser.selected_path
 
         if selected_folder is None:
             show_error(
@@ -664,15 +518,9 @@ class MainWindow:
             f"{message}"
         )
 
-        self.set_status(
-            "Organization failed."
-        )
+        self.set_status("Organization failed.")
 
-        show_error(
-            self.root,
-            "Organization Failed",
-            message,
-        )
+        show_error(self.root, "Organization Failed", message)
 
     # -------------------------------------------------------------------------
     # Flattener
@@ -680,9 +528,7 @@ class MainWindow:
 
     def run_flattener(self) -> None:
         """Start a flatten operation for the selected folder."""
-        selected_folder = (
-            self.folder_browser.selected_path
-        )
+        selected_folder = self.folder_browser.selected_path
 
         if selected_folder is None:
             show_error(
@@ -782,9 +628,7 @@ class MainWindow:
 
         self.refresh_treeview()
 
-        self.set_status(
-            status
-        )
+        self.set_status(status)
 
     def _handle_flatten_error(
         self,
@@ -796,9 +640,7 @@ class MainWindow:
             f"{message}"
         )
 
-        self.set_status(
-            "Flattening failed."
-        )
+        self.set_status("Flattening failed.")
 
         show_error(
             self.root,
@@ -817,17 +659,15 @@ class MainWindow:
     def _update_action_states(self) -> None:
         """Enable or disable commands based on application state."""
         root_available = (
-                self.folder_path is not None
-                and self.folder_path.is_dir()
+            self.folder_path is not None
+            and self.folder_path.is_dir()
         )
 
-        selected_folder = (
-            self.folder_browser.selected_path
-        )
+        selected_folder = self.folder_browser.selected_path
 
         target_available = (
-                selected_folder is not None
-                and selected_folder.is_dir()
+            selected_folder is not None
+            and selected_folder.is_dir()
         )
 
         busy = self.operations.is_busy
@@ -837,14 +677,14 @@ class MainWindow:
         )
 
         operations_enabled = (
-                target_available
-                and not busy
+            target_available
+            and not busy
         )
 
         utilities_enabled = (
-                target_available
-                and root_available
-                and not busy
+            target_available
+            and root_available
+            and not busy
         )
 
         self.toolbar.set_states(
@@ -866,36 +706,28 @@ class MainWindow:
         )
 
     def _handle_operation_started(
-            self,
-            operation: OperationName,
-            folder: Path,
+        self,
+        operation: OperationName,
+        folder: Path,
     ) -> None:
         """Update the UI when a file operation begins."""
         if operation == "organize":
-            self.set_status(
-                "Organizing files..."
-            )
+            self.set_status("Organizing files...")
 
-            self.log_to_text(
-                f"Organizing: {folder}"
-            )
+            self.log_to_text(f"Organizing: {folder}")
 
         elif operation == "flatten":
-            self.set_status(
-                "Flattening files..."
-            )
+            self.set_status("Flattening files...")
 
-            self.log_to_text(
-                f"Flattening: {folder}"
-            )
+            self.log_to_text(f"Flattening: {folder}")
 
         self.status_bar.start_progress()
 
         self._update_action_states()
 
     def _handle_operation_finished(
-            self,
-            operation: OperationName,
+        self,
+        operation: OperationName,
     ) -> None:
         """Update the UI after a file operation finishes."""
         self.status_bar.stop_progress()
@@ -903,21 +735,19 @@ class MainWindow:
         self._update_action_states()
 
     def _handle_cancel_requested(
-            self,
+        self,
     ) -> None:
         """Update the UI after a flatten cancellation request."""
         self.log_to_text(
             "Cancel requested..."
         )
 
-        self.set_status(
-            "Canceling flatten operation..."
-        )
+        self.set_status("Canceling flatten operation...")
 
         self._update_action_states()
 
     def _show_operation_in_progress_warning(
-            self,
+        self,
     ) -> None:
         """Warn that another file operation is already active."""
         show_warning(
@@ -971,8 +801,8 @@ class MainWindow:
     # -------------------------------------------------------------------------
 
     def set_status(
-            self,
-            message: str,
+        self,
+        message: str,
     ) -> None:
         """Update the application status message."""
         self.status_bar.set_status(
@@ -990,8 +820,8 @@ class MainWindow:
         )
 
     def log_to_text(
-            self,
-            message: str,
+        self,
+        message: str,
     ) -> None:
         """Write a message to the activity log."""
         self.activity_log.write(
@@ -1012,9 +842,7 @@ class MainWindow:
 
     def open_selected_folder(self) -> None:
         """Open the selected folder in the platform file manager."""
-        selected_folder = (
-            self.folder_browser.selected_path
-        )
+        selected_folder = self.folder_browser.selected_path
 
         if selected_folder is None:
             show_error(
@@ -1029,8 +857,8 @@ class MainWindow:
         )
 
     def _open_folder_path(
-            self,
-            folder: Path,
+        self,
+        folder: Path,
     ) -> None:
         """Open a folder using the platform file manager."""
         try:
