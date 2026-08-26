@@ -8,7 +8,7 @@ import tkinter.scrolledtext as scrolledtext
 from tkinter import PhotoImage
 from tkinter import filedialog, messagebox, ttk
 from PIL import Image, ImageTk
-from pystray import MenuItem as item
+from pystray import MenuItem as Item
 
 # Define a global flag for canceling flattening operation
 cancel_flattening = False
@@ -173,7 +173,7 @@ def hide_window():
 
     # Create a system tray icon
     image = Image.open("images/folder-256.png")
-    menu = (item('Quit', exit_application), item('Show', show_window))
+    menu = (Item('Quit', exit_application), Item('Show', show_window))
     icon = pystray.Icon("DownloadOrganizer", image, "DownloadOrganizer", menu)
     
     # Run the application

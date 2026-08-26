@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "documents-organizer"
+version = "0.2.0"
+description = "A desktop utility for organizing and flattening file collections."
+requires-python = ">=3.12"
+dependencies = [
+    "pillow==12.3.0",
+    "pystray==0.19.5",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8,<10",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["documents_organizer*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
