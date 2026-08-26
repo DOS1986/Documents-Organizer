@@ -34,7 +34,7 @@ def set_test_modified_date(path: Path) -> None:
     )
 
 
-def test_organize_directory_moves_files_by_extension_and_date(
+def test_organize_directory_moves_files_by_date_then_extension(
     tmp_path: Path,
 ):
     report = tmp_path / "report.pdf"
@@ -52,15 +52,15 @@ def test_organize_directory_moves_files_by_extension_and_date(
 
     expected_report = (
         tmp_path
-        / "pdf"
         / TEST_DATE
+        / "pdf"
         / "report.pdf"
     )
 
     expected_image = (
         tmp_path
-        / "jpg"
         / TEST_DATE
+        / "jpg"
         / "photo.jpg"
     )
 
@@ -80,13 +80,13 @@ def test_organize_directory_moves_files_by_extension_and_date(
     assert not image.exists()
 
 
-def test_organize_directory_preserves_nested_parent_directory(
+def test_nested_files_are_centralized_into_selected_root(
     tmp_path: Path,
 ):
-    nested = tmp_path / "project"
-    nested.mkdir()
+    project = tmp_path / "project"
+    project.mkdir()
 
-    source = nested / "photo.jpg"
+    source = project / "photo.jpg"
     source.write_text("image")
 
     set_test_modified_date(source)
@@ -96,14 +96,48 @@ def test_organize_directory_preserves_nested_parent_directory(
     )
 
     destination = (
-        nested
-        / "jpg"
+        tmp_path
         / TEST_DATE
+        / "jpg"
         / "photo.jpg"
     )
 
     assert result.moved == 1
     assert destination.exists()
+    assert not source.exists()
+
+
+def test_files_from_multiple_nested_directories_are_centralized(
+    tmp_path: Path,
+):
+    first_directory = tmp_path / "project-a"
+    second_directory = tmp_path / "project-b"
+
+    first_directory.mkdir()
+    second_directory.mkdir()
+
+    first_file = first_directory / "one.pdf"
+    second_file = second_directory / "two.pdf"
+
+    first_file.write_text("one")
+    second_file.write_text("two")
+
+    set_test_modified_date(first_file)
+    set_test_modified_date(second_file)
+
+    result = organize_directory(
+        tmp_path
+    )
+
+    destination_directory = (
+        tmp_path
+        / TEST_DATE
+        / "pdf"
+    )
+
+    assert result.moved == 2
+    assert (destination_directory / "one.pdf").exists()
+    assert (destination_directory / "two.pdf").exists()
 
 
 def test_organize_directory_handles_files_without_extension(
@@ -120,12 +154,13 @@ def test_organize_directory_handles_files_without_extension(
 
     destination = (
         tmp_path
-        / "other"
         / TEST_DATE
+        / "other"
         / "README"
     )
 
     assert result.moved == 1
+
     assert result.by_extension == {
         "other": 1
     }
@@ -154,7 +189,7 @@ def test_organize_directory_ignores_system_files(
     assert thumbs.exists()
 
 
-def test_organize_directory_does_not_overwrite_existing_file(
+def test_organizer_does_not_overwrite_existing_file(
     tmp_path: Path,
 ):
     source = tmp_path / "report.pdf"
@@ -164,8 +199,8 @@ def test_organize_directory_does_not_overwrite_existing_file(
 
     destination_directory = (
         tmp_path
-        / "pdf"
         / TEST_DATE
+        / "pdf"
     )
 
     destination_directory.mkdir(
@@ -201,6 +236,58 @@ def test_organize_directory_does_not_overwrite_existing_file(
     )
 
 
+def test_duplicate_names_from_different_folders_are_preserved(
+    tmp_path: Path,
+):
+    first_directory = tmp_path / "project-a"
+    second_directory = tmp_path / "project-b"
+
+    first_directory.mkdir()
+    second_directory.mkdir()
+
+    first = first_directory / "report.pdf"
+    second = second_directory / "report.pdf"
+
+    first.write_text("first")
+    second.write_text("second")
+
+    set_test_modified_date(first)
+    set_test_modified_date(second)
+
+    result = organize_directory(
+        tmp_path
+    )
+
+    destination_directory = (
+        tmp_path
+        / TEST_DATE
+        / "pdf"
+    )
+
+    original_name = (
+        destination_directory
+        / "report.pdf"
+    )
+
+    renamed = (
+        destination_directory
+        / "report (1).pdf"
+    )
+
+    assert result.moved == 2
+
+    assert original_name.exists()
+    assert renamed.exists()
+
+    assert {
+        original_name.read_text(),
+        renamed.read_text(),
+    } == {
+        "first",
+        "second",
+    }
+
+
 def test_running_organizer_twice_does_not_reorganize_files(
     tmp_path: Path,
 ):
@@ -219,17 +306,17 @@ def test_running_organizer_twice_does_not_reorganize_files(
 
     organized_file = (
         tmp_path
-        / "pdf"
         / TEST_DATE
+        / "pdf"
         / "report.pdf"
     )
 
     nested_duplicate = (
         tmp_path
-        / "pdf"
         / TEST_DATE
         / "pdf"
         / TEST_DATE
+        / "pdf"
         / "report.pdf"
     )
 
@@ -242,12 +329,92 @@ def test_running_organizer_twice_does_not_reorganize_files(
     assert not nested_duplicate.exists()
 
 
+def test_get_extension_name_returns_extension_without_dot():
+    assert (
+        get_extension_name(
+            Path("report.PDF")
+        )
+        == "pdf"
+    )
+
+
 def test_get_extension_name_returns_other_for_extensionless_file():
     assert (
         get_extension_name(
             Path("README")
         )
         == "other"
+    )
+
+
+def test_is_already_organized_detects_date_type_layout(
+    tmp_path: Path,
+):
+    organized_directory = (
+        tmp_path
+        / TEST_DATE
+        / "pdf"
+    )
+
+    organized_directory.mkdir(
+        parents=True
+    )
+
+    file_path = (
+        organized_directory
+        / "report.pdf"
+    )
+
+    file_path.write_text("report")
+
+    assert is_already_organized(
+        file_path,
+        tmp_path,
+    )
+
+
+def test_is_already_organized_rejects_old_extension_date_layout(
+    tmp_path: Path,
+):
+    old_directory = (
+        tmp_path
+        / "pdf"
+        / TEST_DATE
+    )
+
+    old_directory.mkdir(
+        parents=True
+    )
+
+    file_path = (
+        old_directory
+        / "report.pdf"
+    )
+
+    file_path.write_text("report")
+
+    assert not is_already_organized(
+        file_path,
+        tmp_path,
+    )
+
+
+def test_is_already_organized_rejects_normal_nested_file(
+    tmp_path: Path,
+):
+    project = tmp_path / "project"
+    project.mkdir()
+
+    file_path = (
+        project
+        / "report.pdf"
+    )
+
+    file_path.write_text("report")
+
+    assert not is_already_organized(
+        file_path,
+        tmp_path,
     )
 
 
@@ -270,7 +437,11 @@ def test_organize_directory_rejects_missing_directory(
 def test_organize_directory_rejects_file_as_root(
     tmp_path: Path,
 ):
-    file_path = tmp_path / "file.txt"
+    file_path = (
+        tmp_path
+        / "file.txt"
+    )
+
     file_path.write_text("test")
 
     with pytest.raises(
@@ -279,43 +450,3 @@ def test_organize_directory_rejects_file_as_root(
         organize_directory(
             file_path
         )
-
-
-def test_is_already_organized_detects_organized_file(
-    tmp_path: Path,
-):
-    organized_directory = (
-        tmp_path
-        / "pdf"
-        / TEST_DATE
-    )
-
-    organized_directory.mkdir(
-        parents=True
-    )
-
-    file_path = (
-        organized_directory
-        / "report.pdf"
-    )
-
-    file_path.write_text("report")
-
-    assert is_already_organized(
-        file_path
-    )
-
-
-def test_is_already_organized_rejects_normal_file(
-    tmp_path: Path,
-):
-    file_path = (
-        tmp_path
-        / "report.pdf"
-    )
-
-    file_path.write_text("report")
-
-    assert not is_already_organized(
-        file_path
-    )

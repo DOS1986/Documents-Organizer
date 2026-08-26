@@ -36,23 +36,25 @@ class OrganizationResult:
 
 def organize_directory(folder: Path | str) -> OrganizationResult:
     """
-    Organize files beneath a directory by extension and modification date.
+    Organize all files beneath a directory by modified date and file type.
 
-    Files are first discovered before any files are moved. This prevents
-    directories created by the organization process from being discovered
-    and processed again during the same operation.
+    Files from nested directories are centralized into the selected root.
 
     Example:
 
         Downloads/
             report.pdf
+            project/
+                notes.txt
 
     becomes:
 
         Downloads/
-            pdf/
-                2026-08-25/
+            2026-08-25/
+                pdf/
                     report.pdf
+                txt/
+                    notes.txt
     """
     root = Path(folder).resolve()
 
@@ -74,8 +76,9 @@ def organize_directory(folder: Path | str) -> OrganizationResult:
 
     for source in files:
         _organize_file(
-            source,
-            result,
+            root=root,
+            source=source,
+            result=result,
         )
 
     return result
@@ -87,8 +90,8 @@ def _snapshot_files(
     """
     Capture the files that exist before organization begins.
 
-    Taking a snapshot prevents newly-created extension/date directories
-    from being traversed by the current organization operation.
+    Taking a snapshot prevents directories created by the organizer from
+    being discovered and processed during the same operation.
     """
     files: list[Path] = []
     failures: list[OrganizationFailure] = []
@@ -123,6 +126,7 @@ def _snapshot_files(
 
 
 def _organize_file(
+    root: Path,
     source: Path,
     result: OrganizationResult,
 ) -> None:
@@ -141,20 +145,25 @@ def _organize_file(
             result.skipped += 1
             return
 
-        if is_already_organized(source):
+        if is_already_organized(
+            source,
+            root,
+        ):
             result.skipped += 1
             return
 
-        extension_name = get_extension_name(source)
+        extension_name = get_extension_name(
+            source
+        )
 
         modified_date = get_modified_date(
             source
         )
 
         destination = (
-            source.parent
-            / extension_name
+            root
             / modified_date
+            / extension_name
             / source.name
         )
 
@@ -189,9 +198,9 @@ def _organize_file(
 
 def get_extension_name(path: Path) -> str:
     """
-    Return the directory name used for a file extension.
+    Return the folder name used for a file type.
 
-    Files without an extension are placed in the 'other' directory.
+    Files without an extension are placed in the 'other' folder.
     """
     suffix = path.suffix.lower()
 
@@ -202,7 +211,7 @@ def get_extension_name(path: Path) -> str:
 
 
 def get_modified_date(path: Path) -> str:
-    """Return the file modification date in YYYY-MM-DD format."""
+    """Return the file's modified date in YYYY-MM-DD format."""
     modified_timestamp = path.stat().st_mtime
 
     return datetime.datetime.fromtimestamp(
@@ -210,40 +219,55 @@ def get_modified_date(path: Path) -> str:
     ).strftime("%Y-%m-%d")
 
 
-def is_already_organized(path: Path) -> bool:
+def is_already_organized(
+    path: Path,
+    root: Path,
+) -> bool:
     """
-    Return True when a file already appears to be in an organized location.
+    Return True when a file is already in the organizer's date/type layout.
 
-    Expected structure:
+    Expected layout relative to the selected root:
 
-        <extension>/<YYYY-MM-DD>/<filename>
+        YYYY-MM-DD/
+            extension/
+                filename
 
     Example:
 
-        pdf/2026-08-25/report.pdf
+        2026-08-25/
+            pdf/
+                report.pdf
     """
-    date_directory = path.parent
+    try:
+        relative_path = path.resolve().relative_to(
+            root.resolve()
+        )
+    except ValueError:
+        return False
 
-    extension_directory = date_directory.parent
+    parts = relative_path.parts
+
+    if len(parts) != 3:
+        return False
+
+    date_directory = parts[0]
+    extension_directory = parts[1]
+
+    try:
+        parsed_date = datetime.date.fromisoformat(
+            date_directory
+        )
+    except ValueError:
+        return False
+
+    if parsed_date.isoformat() != date_directory:
+        return False
 
     expected_extension = get_extension_name(
         path
     )
 
-    if (
-        extension_directory.name.lower()
-        != expected_extension.lower()
-    ):
-        return False
-
-    try:
-        parsed_date = datetime.date.fromisoformat(
-            date_directory.name
-        )
-    except ValueError:
-        return False
-
     return (
-        parsed_date.isoformat()
-        == date_directory.name
+        extension_directory.lower()
+        == expected_extension.lower()
     )
