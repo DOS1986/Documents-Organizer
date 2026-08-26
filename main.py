@@ -1,14 +1,22 @@
 import os
 import shutil
-import datetime
-import pystray
 import threading
 import tkinter as tk
 import tkinter.scrolledtext as scrolledtext
-from tkinter import PhotoImage
-from tkinter import filedialog, messagebox, ttk
-from PIL import Image, ImageTk
-from pystray import MenuItem as Item
+from tkinter import filedialog, messagebox, simpledialog, ttk
+
+import pystray
+from PIL import Image
+from pystray import MenuItem as item
+
+from documents_organizer import __version__
+from documents_organizer.filesystem import move_file_safely
+from documents_organizer.platform_utils import open_in_file_manager
+from documents_organizer.services.organizer import (
+    OrganizationResult,
+    organize_directory,
+)
+
 
 # Define a global flag for canceling flattening operation
 cancel_flattening = False
@@ -16,351 +24,962 @@ cancel_flattening = False
 # Global variable to store the folder path
 folder_path = ""
 
-# Global dictionary to track files organized by extension
-organized_files = {}
+def organize_files(selected_folder):
+    """Start an organization operation in a background thread."""
+    log_to_text(
+        f"Organizing: {selected_folder}"
+    )
 
-# Function to organize files and folders by extension and date modified
-def organize_files(folder_path):
-    """Organize files and folders by extension and date modified."""
-    log_to_text("Organizing files...")
-    threading.Thread(target=organize_folder, args=(folder_path,)).start()
+    worker = threading.Thread(
+        target=_run_organizer,
+        args=(selected_folder,),
+        daemon=True,
+    )
 
-def organize_folder(folder):
-    """Organize files in the specified folder."""
-    for root, dirs, files in os.walk(folder):
-        # Organize files
-        for filename in files:
-            if filename not in ['.DS_Store', 'Thumbs.db']:  # Exclude system files
-                src = os.path.join(root, filename)
-                organize_file(src)
-                
-    # Log message after organizing files of each extension
-    for extension, files in organized_files.items():
-        log_to_text(f"Organized {len(files)} {extension} files")
+    worker.start()
 
-def organize_file(src):
-    """Organize a single file based on its extension and date modified."""
-    extension = os.path.splitext(src)[1].lower()
-    modified_time = os.path.getmtime(src)
-    modified_date = datetime.datetime.fromtimestamp(modified_time).strftime('%Y-%m-%d')
 
-    # Create extension folder and modified date folder within the parent directory
-    parent_dir = os.path.dirname(src)
-    extension_folder = os.path.join(parent_dir, extension[1:])
-    os.makedirs(extension_folder, exist_ok=True)
-    date_folder = os.path.join(extension_folder, modified_date)
-    os.makedirs(date_folder, exist_ok=True)
+def _run_organizer(selected_folder):
+    """Run the organizer service outside the Tkinter main thread."""
+    try:
+        result = organize_directory(
+            selected_folder
+        )
 
-    # Move the file to the organized folder
-    dst = os.path.join(date_folder, os.path.basename(src))
-    shutil.move(src, dst)
-    
-    # Update organized_files dictionary
-    if extension in organized_files:
-        organized_files[extension].append(dst)
-    else:
-        organized_files[extension] = [dst]
-        
-    
-# Function to flatten folders
+    except (
+        FileNotFoundError,
+        NotADirectoryError,
+        PermissionError,
+        OSError,
+    ) as exc:
+        win.after(
+            0,
+            _handle_organization_error,
+            str(exc),
+        )
+
+        return
+
+    win.after(
+        0,
+        _handle_organization_result,
+        result,
+    )
+
+
+def _handle_organization_result(
+    result: OrganizationResult,
+):
+    """Display organization results on the Tkinter main thread."""
+    for extension, count in sorted(
+        result.by_extension.items()
+    ):
+        label = (
+            "file"
+            if count == 1
+            else "files"
+        )
+
+        log_to_text(
+            f"Organized {count} "
+            f"{extension} {label}."
+        )
+
+    if result.skipped:
+        label = (
+            "file"
+            if result.skipped == 1
+            else "files"
+        )
+
+        log_to_text(
+            f"Skipped {result.skipped} "
+            f"{label}."
+        )
+
+    if result.failed:
+        label = (
+            "file"
+            if result.failed == 1
+            else "files"
+        )
+
+        log_to_text(
+            f"Unable to process "
+            f"{result.failed} {label}."
+        )
+
+        for failure in result.failures:
+            log_to_text(
+                f"  {failure.path}: "
+                f"{failure.error}"
+            )
+
+    log_to_text(
+        f"Organization complete. "
+        f"{result.moved} files moved."
+    )
+
+    refresh_treeview()
+
+
+def _handle_organization_error(
+    message: str,
+):
+    """Display a fatal organization error."""
+    log_to_text(
+        f"Organization failed: {message}"
+    )
+
+    messagebox.showerror(
+        "Organization Failed",
+        message,
+    )
+
+
 def flatten_folders():
     """Flatten folders based on specified extensions."""
     selected_item = tree.focus()
+
     if not selected_item:
-        messagebox.showerror("Error", "Please select a folder first.")
+        messagebox.showerror(
+            "Error",
+            "Please select a folder first.",
+        )
         return
 
-    folder_path = get_full_path(tree, selected_item)
-    if not folder_path:
-        messagebox.showerror("Error", "Unable to determine folder path.")
+    selected_folder = get_full_path(
+        tree,
+        selected_item,
+    )
+
+    if not selected_folder:
+        messagebox.showerror(
+            "Error",
+            "Unable to determine folder path.",
+        )
         return
-    
+
     global cancel_flattening
-    cancel_flattening = False  # Reset the flag before starting flattening operation
-    threading.Thread(target=flatten_folder_recursive, args=(folder_path,)).start()
+    cancel_flattening = False
+
+    threading.Thread(
+        target=flatten_folder_recursive,
+        args=(selected_folder,),
+        daemon=True,
+    ).start()
+
 
 def flatten_folder_recursive(folder):
     """Recursively flatten folders."""
     global cancel_flattening
+
     if cancel_flattening:
         log_to_text("Flattening operation canceled.")
         return
-    
-    for root, dirs, files in os.walk(folder):
-        for dir in dirs[:]:
-            dir_path = os.path.join(root, dir)
-            if os.path.basename(dir).lower() in extensions_to_flatten:
-                flatten_subfolders(dir_path)  # Flatten the extension-named folder
-                move_files_to_parent(dir_path)  # Move files to the parent folder
-                dirs.remove(dir)  # Remove the extension-named folder from further traversal
-            else:
-                if not cancel_flattening:
-                    flatten_folder_recursive(dir_path)  # Continue traversing non-extension-named folders
-    
-    # Log when a primary folder is clean of extension folders
-    if all(os.path.basename(dir).lower() not in extensions_to_flatten for dir in os.listdir(folder)):
-        log_to_text(f"{os.path.basename(folder)} is clean of extension folders.")
-        refresh_treeview()
-        
-    # Log flattening completion
-    log_to_text(f"All subfolders in {os.path.basename(folder)} flattened.")
+
+    try:
+        for root, dirs, files in os.walk(folder):
+            if cancel_flattening:
+                log_to_text(
+                    "Flattening operation canceled."
+                )
+                return
+
+            for directory in dirs[:]:
+                if cancel_flattening:
+                    log_to_text(
+                        "Flattening operation canceled."
+                    )
+                    return
+
+                dir_path = os.path.join(
+                    root,
+                    directory,
+                )
+
+                if (
+                    os.path.basename(directory).lower()
+                    in extensions_to_flatten
+                ):
+                    flatten_subfolders(dir_path)
+
+                    if cancel_flattening:
+                        log_to_text(
+                            "Flattening operation canceled."
+                        )
+                        return
+
+                    move_files_to_parent(dir_path)
+
+                    dirs.remove(directory)
+
+                else:
+                    if not cancel_flattening:
+                        flatten_folder_recursive(
+                            dir_path
+                        )
+
+        if not os.path.isdir(folder):
+            return
+
+        remaining_items = os.listdir(folder)
+
+        if all(
+            item_name.lower()
+            not in extensions_to_flatten
+            for item_name in remaining_items
+        ):
+            log_to_text(
+                f"{os.path.basename(folder)} "
+                "is clean of extension folders."
+            )
+
+            refresh_treeview()
+
+        log_to_text(
+            f"All subfolders in "
+            f"{os.path.basename(folder)} flattened."
+        )
+
+    except Exception as exc:
+        log_to_text(
+            f"Error flattening folders: {exc}"
+        )
+
 
 def flatten_subfolders(folder):
     """Flatten subfolders of the specified folder."""
-    for root, dirs, files in os.walk(folder):
-        for file in files:
-            src = os.path.join(root, file)
-            dst = os.path.join(folder, file)
-            shutil.move(src, dst)
+    global cancel_flattening
 
-    # Delete all subfolders
-    for root, dirs, files in os.walk(folder, topdown=False):
-        for dir in dirs:
-            shutil.rmtree(os.path.join(root, dir))
+    for root, dirs, files in os.walk(folder):
+        if cancel_flattening:
+            return
+
+        for filename in files:
+            if cancel_flattening:
+                return
+
+            src = os.path.join(
+                root,
+                filename,
+            )
+
+            destination = os.path.join(
+                folder,
+                filename,
+            )
+
+            # A file already located directly in the target folder
+            # does not need to be moved.
+            if os.path.abspath(src) == os.path.abspath(
+                destination
+            ):
+                continue
+
+            move_file_safely(
+                src,
+                destination,
+            )
+
+    for root, dirs, files in os.walk(
+        folder,
+        topdown=False,
+    ):
+        if cancel_flattening:
+            return
+
+        for directory in dirs:
+            directory_path = os.path.join(
+                root,
+                directory,
+            )
+
+            if os.path.isdir(directory_path):
+                shutil.rmtree(directory_path)
+
 
 def move_files_to_parent(folder):
     """Move files from a folder to its parent folder."""
-    for root, dirs, files in os.walk(folder):
-        for file in files:
-            src = os.path.join(root, file)
-            dst = os.path.join(os.path.dirname(folder), file)
-            shutil.move(src, dst)
+    global cancel_flattening
 
-    # Delete the extension-named folder
-    shutil.rmtree(folder)
-    
-# Function to get the full path of a selected item in the Treeview
+    parent_folder = os.path.dirname(folder)
+
+    for root, dirs, files in os.walk(folder):
+        if cancel_flattening:
+            return
+
+        for filename in files:
+            if cancel_flattening:
+                return
+
+            src = os.path.join(
+                root,
+                filename,
+            )
+
+            destination = os.path.join(
+                parent_folder,
+                filename,
+            )
+
+            move_file_safely(
+                src,
+                destination,
+            )
+
+    if os.path.isdir(folder):
+        shutil.rmtree(folder)
+
+
 def get_full_path(tree, item):
     """Get the full path of a selected item in the Treeview."""
-    path_components = [tree.item(item)['text']]
-    parent = tree.parent(item)
-    while parent:
-        path_components.insert(0, tree.item(parent)['text'])
-        parent = tree.parent(parent)
-    return os.path.join(*path_components)
+    path_components = [
+        tree.item(item)["text"]
+    ]
 
-# Function to add extensions to flatten
+    parent = tree.parent(item)
+
+    while parent:
+        path_components.insert(
+            0,
+            tree.item(parent)["text"],
+        )
+
+        parent = tree.parent(parent)
+
+    return os.path.join(
+        *path_components
+    )
+
+
 def add_extensions():
     """Add extensions to the list of extensions to flatten."""
     existing_extensions = extensions_to_flatten
-    new_extensions = input_extensions(existing_extensions)
-    extensions_to_flatten.extend(new_extensions)
-    log_to_text("Extensions to flatten:\n" + ', '.join(extensions_to_flatten))
+
+    new_extensions = input_extensions(
+        existing_extensions
+    )
+
+    extensions_to_flatten.extend(
+        new_extensions
+    )
+
+    log_to_text(
+        "Extensions to flatten:\n"
+        + ", ".join(extensions_to_flatten)
+    )
+
 
 def input_extensions(existing_extensions):
     """Prompt user to input extensions to add."""
-    extensions_str = tk.simpledialog.askstring("Add Extensions", "Enter extensions separated by commas (e.g., mp4, webp, exe, jpg): ")
-    if extensions_str:
-        new_extensions = [ext.strip() for ext in extensions_str.split(",")]
-        return list(set(new_extensions) - set(existing_extensions))
-    return []
+    extensions_str = simpledialog.askstring(
+        "Add Extensions",
+        (
+            "Enter extensions separated by commas "
+            "(e.g., mp4, webp, exe, jpg):"
+        ),
+    )
+
+    if not extensions_str:
+        return []
+
+    new_extensions = [
+        extension.strip().lower().lstrip(".")
+        for extension in extensions_str.split(",")
+        if extension.strip()
+    ]
+
+    return list(
+        set(new_extensions)
+        - set(existing_extensions)
+    )
+
 
 def stop_flattening():
     """Stop the flattening operation."""
     global cancel_flattening
+
     cancel_flattening = True
 
-# Function to exit the application
-def exit_application(icon, item):
-    """Exit the application."""
-    icon.stop()
-    win.destroy()
+    log_to_text(
+        "Cancel requested..."
+    )
 
-# Function to hide the window
+
+def exit_application(icon, menu_item):
+    """Exit the application from the system tray."""
+    icon.stop()
+
+    win.after(
+        0,
+        win.destroy,
+    )
+
+
 def hide_window():
     """Hide the window and display a system tray icon."""
     win.withdraw()
 
-    # Create a system tray icon
-    image = Image.open("images/folder-256.png")
-    menu = (Item('Quit', exit_application), Item('Show', show_window))
-    icon = pystray.Icon("DownloadOrganizer", image, "DownloadOrganizer", menu)
-    
-    # Run the application
-    icon.run()
+    try:
+        image = Image.open(
+            "images/folder-256.png"
+        )
 
-# Function to show the window again
-def show_window(icon, item):
-    """Show the window again."""
+        menu = (
+            item(
+                "Show",
+                show_window,
+            ),
+            item(
+                "Quit",
+                exit_application,
+            ),
+        )
+
+        icon = pystray.Icon(
+            "DocumentsOrganizer",
+            image,
+            "Documents Organizer",
+            menu,
+        )
+
+        threading.Thread(
+            target=icon.run,
+            daemon=True,
+        ).start()
+
+    except Exception as exc:
+        win.deiconify()
+
+        messagebox.showerror(
+            "System Tray Error",
+            (
+                "Documents Organizer could not "
+                f"start the system tray icon.\n\n{exc}"
+            ),
+        )
+
+
+def show_window(icon, menu_item):
+    """Show the application window again."""
     icon.stop()
-    win.after(0, win.deiconify())
 
-# Function to handle "Select Folder" menu option
+    win.after(
+        0,
+        win.deiconify,
+    )
+
+
 def select_folder():
-    """Handle the 'Select Folder' menu option."""
+    """Handle the Select Folder menu option."""
     global folder_path
-    folder_path = filedialog.askdirectory()
-    if folder_path:
-        update_treeview(folder_path)
 
-# Function to handle "Run" menu option
-def run_organizer():
-    """Handle the 'Run' menu option."""
-    selected_item = tree.focus()
-    if not selected_item:
-        messagebox.showerror("Error", "Please select a folder first.")
+    selected_folder = filedialog.askdirectory()
+
+    if not selected_folder:
         return
-    
-    global folder_path
-    folder_path = tree.item(selected_item)['text']
-    organize_files(folder_path)
 
-# Function to handle "Exit" menu option
+    folder_path = selected_folder
+
+    update_treeview(
+        folder_path
+    )
+
+
+def run_organizer():
+    """Handle the Organize Folders menu option."""
+    selected_item = tree.focus()
+
+    if not selected_item:
+        messagebox.showerror(
+            "Error",
+            "Please select a folder first.",
+        )
+        return
+
+    selected_folder = get_full_path(
+        tree,
+        selected_item,
+    )
+
+    if not os.path.isdir(
+        selected_folder
+    ):
+        messagebox.showerror(
+            "Error",
+            "The selected folder does not exist.",
+        )
+        return
+
+    organize_files(
+        selected_folder
+    )
+
+
 def exit_app():
-    """Handle the 'Exit' menu option."""
-    root.quit()
+    """Exit the application."""
+    win.destroy()
 
-# Function to update the Treeview with directory structure
+
 def update_treeview(directory):
     """Update the Treeview with the directory structure."""
-    tree.delete(*tree.get_children())
-    populate_tree(tree, directory)
+    tree.delete(
+        *tree.get_children()
+    )
+
+    populate_tree(
+        tree,
+        directory,
+    )
+
 
 def populate_tree(tree, directory):
     """Populate the Treeview with the directory structure."""
-    root_node = tree.insert('', 'end', text=directory)
-    populate_children(tree, root_node, directory)
+    root_node = tree.insert(
+        "",
+        "end",
+        text=directory,
+    )
+
+    populate_children(
+        tree,
+        root_node,
+        directory,
+    )
+
 
 def populate_children(tree, parent, directory):
     """Populate children of a node in the Treeview."""
-    for item in os.listdir(directory):
-        item_path = os.path.join(directory, item)
-        if os.path.isdir(item_path):
-            node = tree.insert(parent, 'end', text=item)
-            populate_subdirectories(tree, node, item_path)
+    try:
+        items = os.listdir(directory)
+    except (PermissionError, FileNotFoundError):
+        return
 
-def populate_subdirectories(tree, parent, directory):
+    for item_name in items:
+        item_path = os.path.join(
+            directory,
+            item_name,
+        )
+
+        if os.path.isdir(item_path):
+            node = tree.insert(
+                parent,
+                "end",
+                text=item_name,
+            )
+
+            populate_subdirectories(
+                tree,
+                node,
+                item_path,
+            )
+
+
+def populate_subdirectories(
+    tree,
+    parent,
+    directory,
+):
     """Populate subdirectories of a node in the Treeview."""
-    for item in os.listdir(directory):
-        item_path = os.path.join(directory, item)
-        if os.path.isdir(item_path):
-            node = tree.insert(parent, 'end', text=item)
-            populate_subdirectories(tree, node, item_path)
+    try:
+        items = os.listdir(directory)
+    except (PermissionError, FileNotFoundError):
+        return
 
-# Function to refresh the Treeview after folder operations
+    for item_name in items:
+        item_path = os.path.join(
+            directory,
+            item_name,
+        )
+
+        if os.path.isdir(item_path):
+            node = tree.insert(
+                parent,
+                "end",
+                text=item_name,
+            )
+
+            populate_subdirectories(
+                tree,
+                node,
+                item_path,
+            )
+
+
 def refresh_treeview():
     """Refresh the Treeview after folder operations."""
     global folder_path
-    tree.delete(*tree.get_children())  # Clear the Treeview
-    update_treeview(folder_path)
 
-# Function to ensure the latest log entry is always visible
+    if not folder_path:
+        return
+
+    if not os.path.isdir(folder_path):
+        return
+
+    tree.delete(
+        *tree.get_children()
+    )
+
+    update_treeview(
+        folder_path
+    )
+
+
 def scroll_to_end():
     """Scroll to the end of the log."""
-    log_text.see(tk.END)
-    
-def start_application():
-    # Display all extensions to flatten in log_text
-    log_to_text("Extensions to flatten:\n" + ', '.join(extensions_to_flatten))  
+    log_text.see(
+        tk.END
+    )
 
-# Add log_text modification to ensure latest entry is visible
+
+def start_application():
+    """Display application startup information."""
+    log_to_text(
+        "Extensions to flatten:\n"
+        + ", ".join(extensions_to_flatten)
+    )
+
+
 def log_to_text(message):
     """Log a message to the text widget."""
-    log_text.config(state=tk.NORMAL)
-    log_text.insert(tk.END, message + "\n")
-    log_text.config(state=tk.DISABLED)
+    log_text.config(
+        state=tk.NORMAL
+    )
+
+    log_text.insert(
+        tk.END,
+        message + "\n",
+    )
+
+    log_text.config(
+        state=tk.DISABLED
+    )
+
     scroll_to_end()
 
-# Function to clear log
+
 def clear_log():
     """Clear the log."""
-    log_text.config(state=tk.NORMAL)
-    log_text.delete('1.0', tk.END)
-    log_text.config(state=tk.DISABLED)
+    log_text.config(
+        state=tk.NORMAL
+    )
+
+    log_text.delete(
+        "1.0",
+        tk.END,
+    )
+
+    log_text.config(
+        state=tk.DISABLED
+    )
+
     start_application()
-    
-def open_explorer_folder():
-    selected_item = tree.selection()[0]
-    folder_path = get_full_path(tree, selected_item)
-    os.startfile(folder_path)
-    
+
+
+def open_selected_folder():
+    """Open the selected folder in the operating system's file manager."""
+    selected_items = tree.selection()
+
+    if not selected_items:
+        messagebox.showerror(
+            "Error",
+            "Please select a folder first.",
+        )
+        return
+
+    selected_item = selected_items[0]
+
+    selected_path = get_full_path(
+        tree,
+        selected_item,
+    )
+
+    try:
+        open_in_file_manager(
+            selected_path
+        )
+
+    except (
+        FileNotFoundError,
+        NotADirectoryError,
+        OSError,
+    ) as exc:
+        messagebox.showerror(
+            "Unable to Open Folder",
+            str(exc),
+        )
+
+
 def popup_menu(event):
-    # Get the item that was clicked on
-    item = tree.identify_row(event.y)
-    tree.selection_set(item)
+    """Display the folder context menu."""
+    selected_item = tree.identify_row(
+        event.y
+    )
 
-    # Create the popup menu
-    popup = tk.Menu(win, tearoff=0)
-    popup.add_command(label="Reveal in Explorer", command=open_explorer_folder)
+    if not selected_item:
+        return
 
-    # Display the popup menu at the location of the click
-    popup.post(event.x_root, event.y_root)
-    
-# Function to display information about the application
+    tree.selection_set(
+        selected_item
+    )
+
+    tree.focus(
+        selected_item
+    )
+
+    popup = tk.Menu(
+        win,
+        tearoff=0,
+    )
+
+    popup.add_command(
+        label="Open in File Manager",
+        command=open_selected_folder,
+    )
+
+    popup.post(
+        event.x_root,
+        event.y_root,
+    )
+
+
 def show_about():
-    messagebox.showinfo("About", "Document Organizer\nVersion: v0.1\nPython Version: v3.12.0\nCreated by: David Southwood\nLicense: MIT License")
+    """Display information about the application."""
+    messagebox.showinfo(
+        "About",
+        (
+            "Documents Organizer\n"
+            f"Version: v{__version__}\n"
+            "Created by: David Southwood\n"
+            "License: MIT License"
+        ),
+    )
 
 
-# Extensions to be flattened
-extensions_to_flatten = ['ini', 'zip', 'mp4', 'pdf', 'cpp', 'rar', 'jpg', 'save', 'h', 'txt', 'doc', 'bin', 'exe', 'jar', 'png', 'tmp', 'docx', 'webp', 'mm']  # Add more as needed
+extensions_to_flatten = [
+    "ini",
+    "zip",
+    "mp4",
+    "pdf",
+    "cpp",
+    "rar",
+    "jpg",
+    "save",
+    "h",
+    "txt",
+    "doc",
+    "bin",
+    "exe",
+    "jar",
+    "png",
+    "tmp",
+    "docx",
+    "webp",
+    "mm",
+]
 
-# Create an instance of tkinter frame or window
+
 win = tk.Tk()
 
-win.title("Documents Organizer")
-win.iconbitmap("images/folder-256.ico")
-# Set the size of the window
-win.geometry("1080x800")
+win.title(
+    "Documents Organizer"
+)
 
-# Create menu bar
-menu_bar = tk.Menu(win)
-win.config(menu=menu_bar)
+try:
+    win.iconbitmap(
+        "images/folder-256.ico"
+    )
+except tk.TclError:
+    pass
 
-# Create "File" menu
-file_menu = tk.Menu(menu_bar, tearoff=0)
-file_menu.add_command(label="Select Folder", command=select_folder)
+win.geometry(
+    "1080x800"
+)
+
+
+# Menu bar
+menu_bar = tk.Menu(
+    win
+)
+
+win.config(
+    menu=menu_bar
+)
+
+
+# File menu
+file_menu = tk.Menu(
+    menu_bar,
+    tearoff=0,
+)
+
+file_menu.add_command(
+    label="Select Folder",
+    command=select_folder,
+)
+
 file_menu.add_separator()
-file_menu.add_command(label="Exit", command=exit_app)
-menu_bar.add_cascade(label="File", menu=file_menu)
 
-# Create "Action" menu
-action_menu = tk.Menu(menu_bar, tearoff=0)
+file_menu.add_command(
+    label="Exit",
+    command=exit_app,
+)
 
-# Organize submenu
-organize_submenu = tk.Menu(action_menu, tearoff=0)
-organize_submenu.add_command(label="Organize Folders", command=run_organizer)
-organize_submenu.add_command(label="Flatten Folders", command=flatten_folders)
-organize_submenu.add_command(label="Cancel Flatten Folders", command=stop_flattening)
-action_menu.add_cascade(label="Organize", menu=organize_submenu)
+menu_bar.add_cascade(
+    label="File",
+    menu=file_menu,
+)
 
-# Extensions submenu
-action_menu.add_command(label="Add Extensions", command=add_extensions)
 
-# View submenu
-view_submenu = tk.Menu(action_menu, tearoff=0)
-view_submenu.add_command(label="Clear Log", command=clear_log)
-view_submenu.add_command(label="Refresh TreeView", command=refresh_treeview)
-action_menu.add_cascade(label="View", menu=view_submenu)
+# Action menu
+action_menu = tk.Menu(
+    menu_bar,
+    tearoff=0,
+)
 
-menu_bar.add_cascade(label="Action", menu=action_menu)
+organize_submenu = tk.Menu(
+    action_menu,
+    tearoff=0,
+)
 
-# Create "Help" menu
-help_menu = tk.Menu(menu_bar, tearoff=0)
-help_menu.add_command(label="About", command=show_about)
-menu_bar.add_cascade(label="Help", menu=help_menu)
+organize_submenu.add_command(
+    label="Organize Folders",
+    command=run_organizer,
+)
 
-# Create and configure Treeview widget
-tree_frame = tk.Frame(win)
-tree_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+organize_submenu.add_command(
+    label="Flatten Folders",
+    command=flatten_folders,
+)
 
-# Make the Treeview expand to fill the entire frame
-tree = ttk.Treeview(tree_frame)
-tree.pack(expand=tk.YES, fill=tk.BOTH, padx=5, pady=5)
+organize_submenu.add_command(
+    label="Cancel Flatten Folders",
+    command=stop_flattening,
+)
 
-# Bind the right-click event to the popup_menu function
-tree.bind("<Button-3>", popup_menu)
+action_menu.add_cascade(
+    label="Organize",
+    menu=organize_submenu,
+)
 
-# Add a Sizegrip for resizing
-ttk.Sizegrip(tree_frame).pack(side="right", fill="y")
+action_menu.add_command(
+    label="Add Extensions",
+    command=add_extensions,
+)
 
-# Create and configure ScrolledText widget to display logs
-log_frame = tk.Frame(win, width=500)
-log_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+view_submenu = tk.Menu(
+    action_menu,
+    tearoff=0,
+)
 
-log_text = scrolledtext.ScrolledText(log_frame, height=10, width=50)
-log_text.pack(expand=tk.YES, fill=tk.BOTH)
+view_submenu.add_command(
+    label="Clear Log",
+    command=clear_log,
+)
 
-win.protocol('WM_DELETE_WINDOW', hide_window)
+view_submenu.add_command(
+    label="Refresh TreeView",
+    command=refresh_treeview,
+)
+
+action_menu.add_cascade(
+    label="View",
+    menu=view_submenu,
+)
+
+menu_bar.add_cascade(
+    label="Action",
+    menu=action_menu,
+)
+
+
+# Help menu
+help_menu = tk.Menu(
+    menu_bar,
+    tearoff=0,
+)
+
+help_menu.add_command(
+    label="About",
+    command=show_about,
+)
+
+menu_bar.add_cascade(
+    label="Help",
+    menu=help_menu,
+)
+
+
+# Treeview
+tree_frame = tk.Frame(
+    win
+)
+
+tree_frame.pack(
+    side=tk.LEFT,
+    fill=tk.BOTH,
+    expand=True,
+)
+
+tree = ttk.Treeview(
+    tree_frame
+)
+
+tree.pack(
+    expand=tk.YES,
+    fill=tk.BOTH,
+    padx=5,
+    pady=5,
+)
+
+tree.bind(
+    "<Button-3>",
+    popup_menu,
+)
+
+ttk.Sizegrip(
+    tree_frame
+).pack(
+    side="right",
+    fill="y",
+)
+
+
+# Log
+log_frame = tk.Frame(
+    win,
+    width=500,
+)
+
+log_frame.pack(
+    side=tk.RIGHT,
+    fill=tk.BOTH,
+    expand=True,
+)
+
+log_text = scrolledtext.ScrolledText(
+    log_frame,
+    height=10,
+    width=50,
+)
+
+log_text.pack(
+    expand=tk.YES,
+    fill=tk.BOTH,
+)
+
+log_text.config(
+    state=tk.DISABLED
+)
+
+
+win.protocol(
+    "WM_DELETE_WINDOW",
+    hide_window,
+)
+
 
 start_application()
+
 win.mainloop()
