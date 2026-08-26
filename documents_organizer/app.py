@@ -4,8 +4,11 @@ from documents_organizer.ui.main_window import MainWindow
 
 
 def run() -> None:
+    """Start Documents Organizer."""
     root = tk.Tk()
 
-    MainWindow(root)
+    app = MainWindow(
+        root
+    )
 
     root.mainloop()
