@@ -20,6 +20,12 @@ images_path = (
     / "images"
 )
 
+version_info_path = (
+    project_root
+    / "packaging"
+    / "windows"
+    / "version_info.txt"
+)
 
 a = Analysis(
     [str(entry_point)],
@@ -62,6 +68,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    version=str(version_info_path),
     icon=[
         str(icon_path),
     ],
