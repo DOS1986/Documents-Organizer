@@ -190,6 +190,17 @@ try {
 
     $Version = $PackageVersion
 
+    $ReleaseVersion = $Version
+
+    if (
+        $Version -match '^(\d+\.\d+\.\d+)rc(\d+)$'
+    ) {
+        $ReleaseVersion = (
+            $Matches[1] +
+            "-rc" +
+            $Matches[2]
+        )
+    }
 
     # -------------------------------------------------------------------------
     # Git information
@@ -378,7 +389,7 @@ try {
 
     $ArtifactName = (
         "DocumentsOrganizer-v" +
-        $Version +
+        $ReleaseVersion +
         "-windows-x64"
     )
 
@@ -478,8 +489,12 @@ try {
 
     Write-Step "Windows release build complete"
 
-    Write-Host "Version:"
+    Write-Host "Application version:"
     Write-Host "  $Version"
+
+    Write-Host ""
+    Write-Host "Release version:"
+    Write-Host "  $ReleaseVersion"
 
     Write-Host ""
     Write-Host "Git commit:"

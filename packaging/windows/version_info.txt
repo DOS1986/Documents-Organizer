@@ -21,7 +21,7 @@ VSVersionInfo(
                         ),
                         StringStruct(
                             "FileVersion",
-                            "0.2.0.0",
+                            "0.2.0.1",
                         ),
                         StringStruct(
                             "InternalName",
@@ -41,7 +41,7 @@ VSVersionInfo(
                         ),
                         StringStruct(
                             "ProductVersion",
-                            "0.2.0",
+                            "0.2.0rc1",
                         ),
                     ],
                 )

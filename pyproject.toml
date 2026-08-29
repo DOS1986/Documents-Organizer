@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "documents-organizer"
-version = "0.2.0"
+version = "0.2.0rc1"
 description = "A desktop utility for organizing and flattening file collections."
 requires-python = ">=3.12"
 dependencies = [
