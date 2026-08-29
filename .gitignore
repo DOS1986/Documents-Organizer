@@ -164,3 +164,6 @@ cython_debug/
 # PyInstaller
 /build/
 /dist/
+
+# Release artifacts
+/artifacts/
