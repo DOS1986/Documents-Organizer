@@ -113,6 +113,60 @@ function Get-RegexValue {
 }
 
 
+function Get-WindowsFixedVersion {
+    param(
+        [string]$Path,
+        [string]$FieldName
+    )
+
+    if (-not (Test-Path $Path)) {
+        throw "Required file not found: $Path"
+    }
+
+    $Content = Get-Content `
+        $Path `
+        -Raw
+
+    $EscapedFieldName = (
+        [regex]::Escape(
+            $FieldName
+        )
+    )
+
+    $Pattern = (
+        $EscapedFieldName +
+        '\s*=\s*\(' +
+        '\s*(\d+)\s*,' +
+        '\s*(\d+)\s*,' +
+        '\s*(\d+)\s*,' +
+        '\s*(\d+)\s*' +
+        '\)'
+    )
+
+    $Match = [regex]::Match(
+        $Content,
+        $Pattern
+    )
+
+    if (-not $Match.Success) {
+        throw (
+            "Unable to determine Windows " +
+            "$FieldName from $Path."
+        )
+    }
+
+    return (
+        $Match.Groups[1].Value +
+        "." +
+        $Match.Groups[2].Value +
+        "." +
+        $Match.Groups[3].Value +
+        "." +
+        $Match.Groups[4].Value
+    )
+}
+
+
 # -----------------------------------------------------------------------------
 # Environment validation
 # -----------------------------------------------------------------------------
@@ -149,7 +203,7 @@ try {
 
 
     # -------------------------------------------------------------------------
-    # Version validation
+    # Application version
     # -------------------------------------------------------------------------
 
     Write-Step "Validating application version"
@@ -164,43 +218,173 @@ try {
         -Pattern '(?m)^version\s*=\s*"([^"]+)"' `
         -Description "pyproject version"
 
-    $WindowsProductVersion = Get-RegexValue `
-        -Path $VersionInfoPath `
-        -Pattern '(?s)StringStruct\(\s*"ProductVersion",\s*"([^"]+)"' `
-        -Description "Windows product version"
-
-    Write-Host "Package version:"
-    Write-Host "  $PackageVersion"
-
-    Write-Host "pyproject version:"
-    Write-Host "  $ProjectVersion"
-
-    Write-Host "Windows product version:"
-    Write-Host "  $WindowsProductVersion"
-
-    if (
-        $PackageVersion -ne $ProjectVersion -or
-        $PackageVersion -ne $WindowsProductVersion
-    ) {
+    if ($PackageVersion -ne $ProjectVersion) {
         throw (
-            "Application version mismatch detected. " +
-            "Update all version locations before building."
+            "Application version mismatch detected.`n" +
+            "Package version:   $PackageVersion`n" +
+            "pyproject version: $ProjectVersion"
         )
     }
 
     $Version = $PackageVersion
 
+
+    # -------------------------------------------------------------------------
+    # Release and Windows version calculation
+    # -------------------------------------------------------------------------
+
     $ReleaseVersion = $Version
 
+    $VersionMajor = $null
+    $VersionMinor = $null
+    $VersionPatch = $null
+    $VersionBuild = $null
+
     if (
-        $Version -match '^(\d+\.\d+\.\d+)rc(\d+)$'
+        $Version -match
+        '^(\d+)\.(\d+)\.(\d+)rc(\d+)$'
     ) {
+        $VersionMajor = [int]$Matches[1]
+        $VersionMinor = [int]$Matches[2]
+        $VersionPatch = [int]$Matches[3]
+        $VersionBuild = [int]$Matches[4]
+
         $ReleaseVersion = (
-            $Matches[1] +
+            "$VersionMajor." +
+            "$VersionMinor." +
+            "$VersionPatch" +
             "-rc" +
-            $Matches[2]
+            "$VersionBuild"
         )
     }
+    elseif (
+        $Version -match
+        '^(\d+)\.(\d+)\.(\d+)$'
+    ) {
+        $VersionMajor = [int]$Matches[1]
+        $VersionMinor = [int]$Matches[2]
+        $VersionPatch = [int]$Matches[3]
+        $VersionBuild = 0
+    }
+    else {
+        throw (
+            "Unsupported application version format: $Version`n" +
+            "Expected a version such as 0.2.0 or 0.2.0rc1."
+        )
+    }
+
+    $ExpectedWindowsVersion = (
+        "$VersionMajor." +
+        "$VersionMinor." +
+        "$VersionPatch." +
+        "$VersionBuild"
+    )
+
+    Write-Host "Application version:"
+    Write-Host "  $Version"
+
+    Write-Host "Release version:"
+    Write-Host "  $ReleaseVersion"
+
+    Write-Host "Expected Windows version:"
+    Write-Host "  $ExpectedWindowsVersion"
+
+
+    # -------------------------------------------------------------------------
+    # Windows source metadata validation
+    # -------------------------------------------------------------------------
+
+    Write-Step "Validating Windows version metadata"
+
+    $WindowsProductVersion = Get-RegexValue `
+        -Path $VersionInfoPath `
+        -Pattern (
+            '(?s)StringStruct\(' +
+            '\s*"ProductVersion",' +
+            '\s*"([^"]+)"'
+        ) `
+        -Description "Windows ProductVersion"
+
+    $WindowsFileVersion = Get-RegexValue `
+        -Path $VersionInfoPath `
+        -Pattern (
+            '(?s)StringStruct\(' +
+            '\s*"FileVersion",' +
+            '\s*"([^"]+)"'
+        ) `
+        -Description "Windows FileVersion"
+
+    $WindowsFixedFileVersion = Get-WindowsFixedVersion `
+        -Path $VersionInfoPath `
+        -FieldName "filevers"
+
+    $WindowsFixedProductVersion = Get-WindowsFixedVersion `
+        -Path $VersionInfoPath `
+        -FieldName "prodvers"
+
+    Write-Host "ProductVersion string:"
+    Write-Host "  $WindowsProductVersion"
+
+    Write-Host "FileVersion string:"
+    Write-Host "  $WindowsFileVersion"
+
+    Write-Host "Fixed filevers:"
+    Write-Host "  $WindowsFixedFileVersion"
+
+    Write-Host "Fixed prodvers:"
+    Write-Host "  $WindowsFixedProductVersion"
+
+    if (
+        $WindowsProductVersion -ne
+        $Version
+    ) {
+        throw (
+            "Windows ProductVersion does not match " +
+            "the application version.`n" +
+            "Expected: $Version`n" +
+            "Actual:   $WindowsProductVersion"
+        )
+    }
+
+    if (
+        $WindowsFileVersion -ne
+        $ExpectedWindowsVersion
+    ) {
+        throw (
+            "Windows FileVersion string does not match " +
+            "the expected numeric Windows version.`n" +
+            "Expected: $ExpectedWindowsVersion`n" +
+            "Actual:   $WindowsFileVersion"
+        )
+    }
+
+    if (
+        $WindowsFixedFileVersion -ne
+        $ExpectedWindowsVersion
+    ) {
+        throw (
+            "FixedFileInfo filevers does not match " +
+            "the expected Windows version.`n" +
+            "Expected: $ExpectedWindowsVersion`n" +
+            "Actual:   $WindowsFixedFileVersion"
+        )
+    }
+
+    if (
+        $WindowsFixedProductVersion -ne
+        $ExpectedWindowsVersion
+    ) {
+        throw (
+            "FixedFileInfo prodvers does not match " +
+            "the expected Windows version.`n" +
+            "Expected: $ExpectedWindowsVersion`n" +
+            "Actual:   $WindowsFixedProductVersion"
+        )
+    }
+
+    Write-Host ""
+    Write-Host "Windows source metadata is consistent."
+
 
     # -------------------------------------------------------------------------
     # Git information
@@ -295,7 +479,7 @@ try {
     # PyInstaller
     # -------------------------------------------------------------------------
 
-    Write-Step "Building Documents Organizer v$Version"
+    Write-Step "Building Documents Organizer v$ReleaseVersion"
 
     Invoke-Python -Arguments @(
         "-m",
@@ -327,22 +511,58 @@ try {
         Get-Item $ExecutablePath
     ).VersionInfo
 
+    $ExecutableFixedFileVersion = (
+        "$($ExecutableVersion.FileMajorPart)." +
+        "$($ExecutableVersion.FileMinorPart)." +
+        "$($ExecutableVersion.FileBuildPart)." +
+        "$($ExecutableVersion.FilePrivatePart)"
+    )
+
+    $ExecutableFixedProductVersion = (
+        "$($ExecutableVersion.ProductMajorPart)." +
+        "$($ExecutableVersion.ProductMinorPart)." +
+        "$($ExecutableVersion.ProductBuildPart)." +
+        "$($ExecutableVersion.ProductPrivatePart)"
+    )
+
+    Write-Host "File description:"
+    Write-Host (
+        "  " +
+        $ExecutableVersion.FileDescription
+    )
+
+    Write-Host "FileVersion string:"
+    Write-Host (
+        "  " +
+        $ExecutableVersion.FileVersion
+    )
+
+    Write-Host "Fixed FileVersion:"
+    Write-Host (
+        "  " +
+        $ExecutableFixedFileVersion
+    )
+
+    Write-Host "ProductVersion string:"
+    Write-Host (
+        "  " +
+        $ExecutableVersion.ProductVersion
+    )
+
+    Write-Host "Fixed ProductVersion:"
+    Write-Host (
+        "  " +
+        $ExecutableFixedProductVersion
+    )
+
     if (
         $ExecutableVersion.ProductName -ne
         "Documents Organizer"
     ) {
         throw (
-            "Unexpected ProductName in Windows executable."
-        )
-    }
-
-    if (
-        $ExecutableVersion.ProductVersion -ne
-        $Version
-    ) {
-        throw (
-            "Executable ProductVersion does not match " +
-            "application version."
+            "Unexpected ProductName in Windows executable.`n" +
+            "Expected: Documents Organizer`n" +
+            "Actual:   $($ExecutableVersion.ProductName)"
         )
     }
 
@@ -351,27 +571,62 @@ try {
         "Documents Organizer"
     ) {
         throw (
-            "Unexpected FileDescription in Windows executable."
+            "Unexpected FileDescription in Windows executable.`n" +
+            "Expected: Documents Organizer`n" +
+            "Actual:   $($ExecutableVersion.FileDescription)"
         )
     }
 
-    Write-Host "File description:"
-    Write-Host (
-        "  " +
-        $ExecutableVersion.FileDescription
-    )
+    if (
+        $ExecutableVersion.ProductVersion -ne
+        $Version
+    ) {
+        throw (
+            "Executable ProductVersion string does not match " +
+            "the application version.`n" +
+            "Expected: $Version`n" +
+            "Actual:   $($ExecutableVersion.ProductVersion)"
+        )
+    }
 
-    Write-Host "File version:"
-    Write-Host (
-        "  " +
-        $ExecutableVersion.FileVersion
-    )
+    if (
+        $ExecutableVersion.FileVersion -ne
+        $ExpectedWindowsVersion
+    ) {
+        throw (
+            "Executable FileVersion string does not match " +
+            "the expected Windows version.`n" +
+            "Expected: $ExpectedWindowsVersion`n" +
+            "Actual:   $($ExecutableVersion.FileVersion)"
+        )
+    }
 
-    Write-Host "Product version:"
-    Write-Host (
-        "  " +
-        $ExecutableVersion.ProductVersion
-    )
+    if (
+        $ExecutableFixedFileVersion -ne
+        $ExpectedWindowsVersion
+    ) {
+        throw (
+            "Executable fixed FileVersion does not match " +
+            "the expected Windows version.`n" +
+            "Expected: $ExpectedWindowsVersion`n" +
+            "Actual:   $ExecutableFixedFileVersion"
+        )
+    }
+
+    if (
+        $ExecutableFixedProductVersion -ne
+        $ExpectedWindowsVersion
+    ) {
+        throw (
+            "Executable fixed ProductVersion does not match " +
+            "the expected Windows version.`n" +
+            "Expected: $ExpectedWindowsVersion`n" +
+            "Actual:   $ExecutableFixedProductVersion"
+        )
+    }
+
+    Write-Host ""
+    Write-Host "Executable metadata is valid."
 
 
     # -------------------------------------------------------------------------
@@ -497,6 +752,10 @@ try {
     Write-Host "  $ReleaseVersion"
 
     Write-Host ""
+    Write-Host "Windows version:"
+    Write-Host "  $ExpectedWindowsVersion"
+
+    Write-Host ""
     Write-Host "Git commit:"
     Write-Host "  $GitCommit"
 
@@ -514,7 +773,7 @@ try {
 
     Write-Host ""
     Write-Host (
-        "Documents Organizer v$Version " +
+        "Documents Organizer v$ReleaseVersion " +
         "Windows build completed successfully."
     )
 }
